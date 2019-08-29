@@ -1,0 +1,24 @@
+# binary
+*.h5
+*.json
+*.log
+*.out
+*.pdf
+*.png
+
+# editor
+*~
+*#
+
+# latex
+*.aux
+*.bbl
+*.blg
+
+# private
+_test
+
+# python
+**/__pycache__
+*.pyc
+*.egg-info
