@@ -1,6 +1,6 @@
 \documentclass[letterpaper, 12pt]{article}
 
-\input{/home/tcpropson/repos/summer19/docs/report/preamble}
+\input{/home/tcpropson/repos/multimode-qoc/report/report/preamble}
 
 \begin{document}
 
@@ -352,7 +352,37 @@ This experiment will have the same setup as experiment 1. The goal of this exper
 \subsection{Experiment 7}
 This experiment will have the same setup as experiment 1. The goal of this experiment will be to achieve the state transfer $\ket{g, 0} \rightarrow \ket{g, 1}$ and $\ket{e, 0} \rightarrow \ket{g, 1}$.
 
-\bibliography{/home/tcpropson/repos/summer19/docs/report/bib}
+\subsection{Experiment 8}
+The system hamiltonian is:
+\begin{align*}
+  H_{0}
+  &= 2 * \chi_{e} * a^{\dagger}a \otimes \ket{e}\bra{e}\\
+  %% &+ 2 * \chi_{f} * a^{\dagger}a \otimes \ket{f}\bra{f}\\
+  &+ \chi_{e, 2} * {a^{\dagger}}^{2}a^{2} \otimes \ket{e}\bra{e}\\
+  &+ \frac{\kappa}{2} * {a^{\dagger}}^{2}a^{2} \otimes I_{t}\\
+\end{align*}
+
+The control hamiltonians are:
+\begin{align*}
+  H_{ge} &= \epsilon_{ge} (I_{c} \otimes \ket{g}\bra{e})\\
+         &+ \epsilon_{ge}^{*} (I_{c} \otimes \ket{e}\bra{g})\\
+  %% H_{ef} &= \epsilon_{ef} (\ket{e}\bra{f} \otimes I_{c})\\
+  %%        &+ \epsilon_{ef}^{*} (\ket{f}\bra{e} \otimes I_{c})\\
+  H_{c} &= \epsilon_{c} (a \otimes I_{t})\\
+        &+ \epsilon_{c}^{*} (a^{\dagger} \otimes I_{t})\\
+\end{align*}
+
+We will use 20 cavity levels and two transmon levels. This is motivated by experimental results; Vatsan has seen that higher cavity modes are being populated, but higher transmon levels are not being populated by optimal control pulses.
+
+\begin{align*}
+  \chi_{e} &= -5.65 * 10^{-4} GHz\\
+  \chi_{e, 2} &= 7.3 * 10^{-7} GHz\\
+  \kappa &= 2.09 * 10^{-6} GHz\\
+  MAX\_AMP\_C &= 2 * \pi * 2 * 10^{-3} GHz\\
+  MAX\_AMP\_T &= 2 * \pi * 2 * 10^{-2} GHz\\
+\end{align*}
+
+\bibliography{/home/tcpropson/repos/multimode-qoc/report/report/bib}
 \bibliographystyle{plainnat}
 
 \end{document}
