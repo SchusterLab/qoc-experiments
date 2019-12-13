@@ -5,6 +5,7 @@
 *.out
 *.pdf
 *.png
+out
 
 # editor
 *~

@@ -1,3 +1,0 @@
-file                  | pulse time | error | notes
-00003_piccolo_exp3.h5     6e2         4e-4   ti, pvaro1, pvaro2, weird shape due to extension
-00005_piccolo_exp3.h5     6e2         4e-4   ti, pvaro1, pvaro2 *

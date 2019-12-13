@@ -1,2 +1,0 @@
-file                  | pulse time | error | notes
-00000_piccolo_exp4.h5     6e2         4e-4   ti, pvar1, pvar2 *

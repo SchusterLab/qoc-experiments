@@ -382,6 +382,37 @@ We will use 20 cavity levels and two transmon levels. This is motivated by exper
   MAX\_AMP\_T &= 2 * \pi * 2 * 10^{-2} GHz\\
 \end{align*}
 
+Experiment 8 will attempt to achieve the state transfer $\ket{0, g} \rightarrow \ket{1, g}$.
+
+\section{Experiment 9}
+The system hamiltonian in the rotating frame for the piccolo under blockade is
+\begin{align*}
+  H &= 2 * \chi * (a^{\dagger}a - n_{0}) \ket{e} \bra{e}\\
+  &+ \Omega * (\ket{g} \bra{e} + \ket{e} \bra{g})\\
+  &+ \frac{\kappa}{2} * (a^{\dagger}a)(a^{\dagger}a - 1)\\
+  &+ \epsilon(t)a + \epsilon(t)^{*}a^{\dagger}
+\end{align*}
+where
+\begin{table}[H]
+  \begin{center}
+    \begin{tabular}{c | c}
+      Parameter & Value\\
+      \hline
+      $\chi$          & $2 \pi * -5.672016 * 10^{-4}$ GHz\\
+      $\kappa$        & $2 \pi * 2.09 * 10^{-6}$ GHz\\
+      $\Omega$        & $2 \pi * 1.44 * 10^{-4}$ GHz\\
+      $MAX\_BANDWIDTH$ & $2 * \Omega$\\
+      $MAX\_AMPLITUDE$ & $2 \pi * 1.5 * 10^{-5}$ GHz\\
+    \end{tabular}
+  \end{center}
+  \caption{Rotating frame hamiltonian parameters for the piccolo blockade.}
+\end{table}
+
+Experiment 9 will attempt to achieve the state transfer
+\begin{align*}
+  \ket{0, g} \rightarrow \ket{1, g}
+\end{align*}
+
 \bibliography{/home/tcpropson/repos/multimode-qoc/report/report/bib}
 \bibliographystyle{plainnat}
 

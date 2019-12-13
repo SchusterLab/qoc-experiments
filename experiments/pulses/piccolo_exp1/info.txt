@@ -1,4 +1,0 @@
-file                  | pulse time | error | notes
-00012_piccolo_exp1.h5     1e3         9e-4   ti, pvar_order1
-00015_piccolo_exp1.h5     5e2         5e-3   ti, pvar_order1
-00017_piccolo_exp1.h5     5e2         5e-3   ti, pvar_order1, pvar_order2 *
