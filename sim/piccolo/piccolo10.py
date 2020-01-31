@@ -1,7 +1,9 @@
 """
-piccolo_exp10.py - Experiment 10 for the piccolo system.
+piccolo10.py - Experiment 10 for the piccolo system.
 """
 
+from argparse import ArgumentParser
+from copy import copy
 import os
 
 import autograd.numpy as anp
@@ -22,17 +24,21 @@ from qoc.standard import (conjugate_transpose,
                           generate_save_file_path,)
 
 # Paths.
-DATA_PATH = os.path.join(os.environ["MULTIMODE_QOC_PATH"], "out")
+META_NAME = "piccolo"
+EXPERIMENT_NAME = "piccolo10"
+MMQOC_PATH = os.environ["MULTIMODE_QOC_PATH"]
+DATA_PATH = os.path.join(MMQOC_PATH, "out", EXPERIMENT_NAME)
+
 
 # Specify computer specs.
 CORE_COUNT = 8
 
 # Define experimental constants.
 BLOCKADE_LEVEL = 3
-CHI_E = 2 * anp.pi * -5.672016e-4 #GHz
-KAPPA = 2 * anp.pi * 2.09e-6 #GHz
-OMEGA = 2 * anp.pi * 1.44e-4 #GHz
-MAX_AMP_C = anp.sqrt(2) * 2 * anp.pi * 1.5e-5 #GHz
+CHI_E = 2 * anp.pi * -5.644535742521878e-4 #GHz
+KAPPA = 2 * anp.pi * -3.36e-6
+OMEGA = 2 * anp.pi * 1.44e-4
+MAX_AMP_C = anp.sqrt(2) * 2 * anp.pi * 1.5e-5
 MAX_BND_C = 2 * OMEGA
 
 # Define the system.
@@ -60,63 +66,46 @@ TRANSMON_E = anp.copy(TRANSMON_VACUUM)
 TRANSMON_E[1][0] = 1.
 TRANSMON_E_DAGGER = conjugate_transpose(TRANSMON_E)
 
-H_SYSTEM = (2 * CHI_E * anp.kron(CAVITY_NUMBER - BLOCKADE_LEVEL, anp.matmul(TRANSMON_E, TRANSMON_E_DAGGER))
-            + OMEGA * anp.kron(CAVITY_I,
-                               anp.matmul(TRANSMON_G, TRANSMON_E_DAGGER)
-                               + anp.matmul(TRANSMON_E, TRANSMON_G_DAGGER))
-            + KAPPA / 2 * anp.kron(anp.matmul(CAVITY_NUMBER, CAVITY_NUMBER - CAVITY_I), TRANSMON_I))
-assert(anp.allclose(H_SYSTEM, conjugate_transpose(H_SYSTEM)))
-H_C = anp.kron(CAVITY_ANNIHILATE, TRANSMON_I)
-H_C_DAGGER = conjugate_transpose(H_C)
-hamiltonian = (lambda controls, time:
-               H_SYSTEM
-               + controls[0] * H_C
-               + anp.conjugate(controls[0]) * H_C_DAGGER)
+H_SYSTEM = (
+    2 * CHI_E * anp.kron(CAVITY_NUMBER - BLOCKADE_LEVEL * CAVITY_I,
+                         anp.matmul(TRANSMON_E, TRANSMON_E_DAGGER))
+    + OMEGA * anp.kron(CAVITY_I,
+                       anp.matmul(TRANSMON_G, TRANSMON_E_DAGGER)
+                       + anp.matmul(TRANSMON_E, TRANSMON_G_DAGGER))
+    + KAPPA / 2 * anp.kron(anp.matmul(CAVITY_NUMBER, CAVITY_NUMBER - CAVITY_I), TRANSMON_I))
+H_C_0 = anp.kron(CAVITY_ANNIHILATE, TRANSMON_I)
+H_C_0_DAGGER = conjugate_transpose(H_C_0)
 
+nhamiltonian = lambda controls, time: (
+    H_SYSTEM
+    + controls[0] * H_C_0
+    + anp.conjugate(controls[0]) * H_C_0_DAGGER
+)
+CONTROL_COUNT = 1
+COMPLEX_CONTROLS = True
 MAX_CONTROL_NORMS = anp.array((MAX_AMP_C,))
 MAX_CONTROL_BANDWIDTHS = anp.array((MAX_BND_C,))
-COMPLEX_CONTROLS = True
-CONTROL_COUNT = 1
-EVOLUTION_TIME = int(3e4) #ns
-CONTROL_EVAL_COUNT = SYSTEM_EVAL_COUNT = int(EVOLUTION_TIME)
-
-# Define the optimization parameters.
-ITERATION_COUNT = int(1e4)
-LEARNING_RATE = 1e-3
-OPTIMIZER = Adam(learning_rate=LEARNING_RATE)
-# Set initial controls to optimal controls found by another iteration.
-FILE_PATH = os.path.join(DATA_PATH, "piccolo_exp10/00001_piccolo_exp10.h5")
-FILE_LOCK_PATH = "{}.lock".format(FILE_PATH)
-try:
-    with FileLock(FILE_LOCK_PATH):
-        with h5py.File(FILE_PATH) as file_:
-            index = anp.argmin(file_["error"])
-            controls = file_["controls"][index]
-except Timeout:
-    print("Timeout encountered")
-    exit(0)
-INITIAL_CONTROLS = controls
-# INITIAL_CONTROLS = None
-def impose_control_conditions(controls):
-    """
-    Impose 0 on the control boundaries.
-    """
-    controls[0,:]= 0
-    controls[-1, :] = 0
-    return controls
-# impose_control_conditions = None
 
 # Define the problem.
+EVOLUTION_TIME = int(3.5e4) #ns
+CONTROL_EVAL_COUNT = SYSTEM_EVAL_COUNT = int(EVOLUTION_TIME)
+
 INITIAL_STATE_0 = anp.kron(CAVITY_ZERO, TRANSMON_G)
 INITIAL_STATE_1 = anp.kron(CAVITY_ONE, TRANSMON_G)
 INITIAL_STATE_2 = anp.kron(CAVITY_TWO, TRANSMON_G)
-INITIAL_STATES = anp.stack((INITIAL_STATE_0, INITIAL_STATE_1,
-                            INITIAL_STATE_2,))
+INITIAL_STATES = anp.stack((
+    # INITIAL_STATE_0,
+    # INITIAL_STATE_1,
+    INITIAL_STATE_2,
+))
 TARGET_STATE_0 = anp.kron(CAVITY_ONE, TRANSMON_G)
 TARGET_STATE_1 = anp.kron(CAVITY_TWO, TRANSMON_G)
 TARGET_STATE_2 = anp.kron(CAVITY_ZERO, TRANSMON_G)
-TARGET_STATES = anp.stack((TARGET_STATE_0, TARGET_STATE_1,
-                           TARGET_STATE_2,))
+TARGET_STATES = anp.stack((
+    # TARGET_STATE_0,
+    # TARGET_STATE_1,
+    TARGET_STATE_2,
+))
 def gauss(x):
     b = anp.mean(x)
     c = anp.std(x)
@@ -126,24 +115,26 @@ CONTROL_NORM_WEIGHTS = anp.repeat(CONTROL_NORM_WEIGHTS[:, anp.newaxis], CONTROL_
 # Don't penalize controls in the middle.
 # CONTROL_OFFSET = int(CONTROL_COUNT / 5)
 # CONTROL_NORM_WEIGHTS[CONTROL_OFFSET:-CONTROL_OFFSET] = 0
-CONTROL_BANDWIDTH_MULTIPLIER = 1.
-CONTROL_NORM_MULTIPLIER = 0.5
+
+FIDELITY_MULTIPLIER = 1.
 CONTROL_VAR_01_MULTIPLIER = 1.
 CONTROL_VAR_02_MULTIPLIER = 1.
-FIDELITY_MULTIPLIER = 1.
+CONTROL_NORM_MULTIPLIER = 0.5
+CONTROL_BANDWIDTH_MULTIPLIER = 1.
+
 COSTS = [
     TargetStateInfidelity(TARGET_STATES,
                           cost_multiplier=FIDELITY_MULTIPLIER),
-     ControlVariation(CONTROL_COUNT,
-                      CONTROL_EVAL_COUNT,
-                      cost_multiplier=CONTROL_VAR_01_MULTIPLIER,
-                      max_control_norms=MAX_CONTROL_NORMS,
-                      order=1),
-     ControlVariation(CONTROL_COUNT,
-                      CONTROL_EVAL_COUNT,
-                      cost_multiplier=CONTROL_VAR_02_MULTIPLIER,
-                      max_control_norms=MAX_CONTROL_NORMS,
-                      order=2),
+     # ControlVariation(CONTROL_COUNT,
+     #                  CONTROL_EVAL_COUNT,
+     #                  cost_multiplier=CONTROL_VAR_01_MULTIPLIER,
+     #                  max_control_norms=MAX_CONTROL_NORMS,
+     #                  order=1),
+     # ControlVariation(CONTROL_COUNT,
+     #                  CONTROL_EVAL_COUNT,
+     #                  cost_multiplier=CONTROL_VAR_02_MULTIPLIER,
+     #                  max_control_norms=MAX_CONTROL_NORMS,
+     #                  order=2),
      # ControlNorm(CONTROL_COUNT, CONTROL_EVAL_COUNT,
      #             control_weights=CONTROL_NORM_WEIGHTS,
      #             cost_multiplier=CONTROL_NORM_MULTIPLIER,
@@ -153,14 +144,38 @@ COSTS = [
      #                     cost_multiplier=CONTROL_BANDWIDTH_MULTIPLIER),
 ]
 
+def impose_control_conditions(controls):
+    # Impose 0 at the boundaries.
+    controls[0, :]= 0
+    controls[-1, :] = 0
+    return controls
+
+# Define the optimization.
+LEARNING_RATE = 5e-2
+OPTIMIZER = Adam(learning_rate=LEARNING_RATE)
+ITERATION_COUNT = int(1e3)
+GRAB_CONTROLS = True
+if GRAB_CONTROLS:
+    controls_path = os.path.join(DATA_PATH, "00003_piccolo10.h5")
+    controls_lock_path = "{}.lock".format(controls_path)
+    try:
+        with FileLock(controls_lock_path):
+            with h5py.File(controls_path, "r") as file_:
+                index = anp.argmin(file_["error"])
+                controls = file_["controls"][index]
+    except Timeout:
+        print("Timeout encountered")
+        exit(0)
+    INITIAL_CONTROLS = controls
+else:
+    INITIAL_CONTROLS = None
+    
 # Define the output.
 LOG_ITERATION_STEP = 1
-SAVE_FILE_NAME = "piccolo_exp10"
 SAVE_ITERATION_STEP = 1
-SAVE_PATH = os.path.join(DATA_PATH, SAVE_FILE_NAME,)
-SAVE_FILE_PATH = generate_save_file_path(SAVE_FILE_NAME, SAVE_PATH)
 SAVE_INTERMEDIATE_STATES_GRAPE = False
 SAVE_INTERMEDIATE_STATES_EVOL = True
+SAVE_EVOL = False
 
 GRAPE_CONFIG = {
     "control_count": CONTROL_COUNT,
@@ -177,7 +192,6 @@ GRAPE_CONFIG = {
     "log_iteration_step": LOG_ITERATION_STEP,
     "max_control_norms": MAX_CONTROL_NORMS,
     "optimizer": OPTIMIZER,
-    "save_file_path": SAVE_FILE_PATH,
     "save_intermediate_states": SAVE_INTERMEDIATE_STATES_GRAPE,
     "save_iteration_step": SAVE_ITERATION_STEP,
 }
@@ -190,13 +204,40 @@ EVOL_CONFIG = {
     "initial_states": INITIAL_STATES,
     "system_eval_count": SYSTEM_EVAL_COUNT,
     "save_intermediate_states": SAVE_INTERMEDIATE_STATES_EVOL,
-    "save_file_path": SAVE_FILE_PATH,
 }
 
+def run_grape():
+    save_file_path = generate_save_file_path(EXPERIMENT_NAME, DATA_PATH)
+    config = copy(GRAPE_CONFIG)
+    config.update({
+        "save_file_path": save_file_path,
+    })
+    result = grape_schroedinger_discrete(**config)
+
+
+def run_evolve():
+    config = copy(EVOL_CONFIG)
+    if SAVE_EVOL:
+        save_file_path = generate_save_file_path(EXPERIMENT_NAME, DATA_PATH)
+        config.update({
+            "save_file_path": save_file_path,
+        })
+    result = evolve_schroedinger_discrete(**config)
+    print(result.error)
+
+
 def main():
-   # result = grape_schroedinger_discrete(**GRAPE_CONFIG)
-   # result = evolve_schroedinger_discrete(**EVOL_CONFIG)
-   # print(result.error)
+    parser = ArgumentParser()
+    parser.add_argument("--grape", action="store_true")
+    parser.add_argument("--evolve", action="store_true")
+    args = vars(parser.parse_args())
+    do_grape = args["grape"]
+    do_evolve = args["evolve"]
+
+    if do_grape:
+        run_grape()
+    elif do_evolve:
+        run_evolve()
 
 
 if __name__ == "__main__":

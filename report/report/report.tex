@@ -375,11 +375,11 @@ The control hamiltonians are:
 We will use 20 cavity levels and two transmon levels. This is motivated by experimental results; Vatsan has seen that higher cavity modes are being populated, but higher transmon levels are not being populated by optimal control pulses.
 
 \begin{align*}
-  \chi_{e} &= -5.65 * 10^{-4} GHz\\
-  \chi_{e, 2} &= 7.3 * 10^{-7} GHz\\
-  \kappa &= 2.09 * 10^{-6} GHz\\
-  MAX\_AMP\_C &= 2 * \pi * 2 * 10^{-3} GHz\\
-  MAX\_AMP\_T &= 2 * \pi * 2 * 10^{-2} GHz\\
+  \chi_{e} &= -5.65 \cdot 10^{-4} GHz\\
+  \chi_{e, 2} &= 7.3 \cdot 10^{-7} GHz\\
+  \kappa &= 2.09 \cdot 10^{-6} GHz\\
+  MAX\_AMP\_C &= 2 \cdot \pi \cdot 2 \cdot 10^{-3} GHz\\
+  MAX\_AMP\_T &= 2 \cdot \pi \cdot 2 \cdot 10^{-2} GHz\\
 \end{align*}
 
 Experiment 8 will attempt to achieve the state transfer $\ket{0, g} \rightarrow \ket{1, g}$.
@@ -387,9 +387,9 @@ Experiment 8 will attempt to achieve the state transfer $\ket{0, g} \rightarrow 
 \section{Experiment 9}
 The system hamiltonian in the rotating frame for the piccolo under blockade is
 \begin{align*}
-  H &= 2 * \chi * (a^{\dagger}a - n_{0}) \ket{e} \bra{e}\\
-  &+ \Omega * (\ket{g} \bra{e} + \ket{e} \bra{g})\\
-  &+ \frac{\kappa}{2} * (a^{\dagger}a)(a^{\dagger}a - 1)\\
+  H &= 2 \cdot \chi \cdot (a^{\dagger}a - n_{0}) \ket{e} \bra{e}\\
+  &+ \Omega \cdot (\ket{g} \bra{e} + \ket{e} \bra{g})\\
+  &+ \frac{\kappa}{2} \cdot (a^{\dagger}a)(a^{\dagger}a - 1)\\
   &+ \epsilon(t)a + \epsilon(t)^{*}a^{\dagger}
 \end{align*}
 where
@@ -398,11 +398,11 @@ where
     \begin{tabular}{c | c}
       Parameter & Value\\
       \hline
-      $\chi$          & $2 \pi * -5.672016 * 10^{-4}$ GHz\\
-      $\kappa$        & $2 \pi * 2.09 * 10^{-6}$ GHz\\
-      $\Omega$        & $2 \pi * 1.44 * 10^{-4}$ GHz\\
-      $MAX\_BANDWIDTH$ & $2 * \Omega$\\
-      $MAX\_AMPLITUDE$ & $2 \pi * 1.5 * 10^{-5}$ GHz\\
+      $\chi$          & $2 \pi \cdot -5.644535742521878 \cdot 10^{-4}$ GHz\\
+      $\kappa$        & $2 \pi \cdot -3.36 \cdot 10^{-6}$ GHz\\
+      $\Omega$        & $2 \pi \cdot 1.44 \cdot 10^{-4}$ GHz\\
+      $MAX\_BANDWIDTH$ & $2 \cdot \Omega$\\
+      $MAX\_AMPLITUDE$ & $2 \pi \cdot 1.5 \cdot 10^{-5}$ GHz\\
     \end{tabular}
   \end{center}
   \caption{Rotating frame hamiltonian parameters for the piccolo blockade.}
@@ -411,6 +411,15 @@ where
 Experiment 9 will attempt to achieve the state transfer
 \begin{align*}
   \ket{0, g} \rightarrow \ket{1, g}
+\end{align*}
+
+\section{Experiment 10}
+Experiment 10 will follow the blockade setup of experiment 9. It will
+attempt the state transfer
+\begin{align*}
+  \ket{0, g} \rightarrow \ket{1, g}
+  \ket{1, g} \rightarrow \ket{2, g}
+  \ket{2, g} \rightarrow \ket{0, g}
 \end{align*}
 
 \bibliography{/home/tcpropson/repos/multimode-qoc/report/report/bib}
