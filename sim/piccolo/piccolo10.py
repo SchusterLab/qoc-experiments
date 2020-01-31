@@ -94,16 +94,16 @@ INITIAL_STATE_0 = anp.kron(CAVITY_ZERO, TRANSMON_G)
 INITIAL_STATE_1 = anp.kron(CAVITY_ONE, TRANSMON_G)
 INITIAL_STATE_2 = anp.kron(CAVITY_TWO, TRANSMON_G)
 INITIAL_STATES = anp.stack((
-    # INITIAL_STATE_0,
-    # INITIAL_STATE_1,
+    INITIAL_STATE_0,
+    INITIAL_STATE_1,
     INITIAL_STATE_2,
 ))
 TARGET_STATE_0 = anp.kron(CAVITY_ONE, TRANSMON_G)
 TARGET_STATE_1 = anp.kron(CAVITY_TWO, TRANSMON_G)
 TARGET_STATE_2 = anp.kron(CAVITY_ZERO, TRANSMON_G)
 TARGET_STATES = anp.stack((
-    # TARGET_STATE_0,
-    # TARGET_STATE_1,
+    TARGET_STATE_0,
+    TARGET_STATE_1,
     TARGET_STATE_2,
 ))
 def gauss(x):
@@ -154,7 +154,7 @@ def impose_control_conditions(controls):
 LEARNING_RATE = 5e-2
 OPTIMIZER = Adam(learning_rate=LEARNING_RATE)
 ITERATION_COUNT = int(1e3)
-GRAB_CONTROLS = True
+GRAB_CONTROLS = False
 if GRAB_CONTROLS:
     controls_path = os.path.join(DATA_PATH, "00003_piccolo10.h5")
     controls_lock_path = "{}.lock".format(controls_path)
