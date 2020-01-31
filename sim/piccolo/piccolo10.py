@@ -76,7 +76,7 @@ H_SYSTEM = (
 H_C_0 = anp.kron(CAVITY_ANNIHILATE, TRANSMON_I)
 H_C_0_DAGGER = conjugate_transpose(H_C_0)
 
-nhamiltonian = lambda controls, time: (
+hamiltonian = lambda controls, time: (
     H_SYSTEM
     + controls[0] * H_C_0
     + anp.conjugate(controls[0]) * H_C_0_DAGGER
