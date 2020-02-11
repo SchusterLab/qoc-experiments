@@ -36,7 +36,7 @@ CORE_COUNT = 8
 # Define experimental constants.
 BLOCKADE_LEVEL = 3
 CHI_E = 2 * anp.pi * -5.644535742521878e-4 #GHz
-KAPPA = 2 * anp.pi * -3.36e-6
+KAPPA = 2 * anp.pi * -2.82e-6
 OMEGA = 2 * anp.pi * 1.44e-4
 MAX_AMP_C = anp.sqrt(2) * 2 * anp.pi * 1.5e-5
 MAX_BND_C = 2 * OMEGA
@@ -87,7 +87,7 @@ MAX_CONTROL_NORMS = anp.array((MAX_AMP_C,))
 MAX_CONTROL_BANDWIDTHS = anp.array((MAX_BND_C,))
 
 # Define the problem.
-EVOLUTION_TIME = int(3.5e4) #ns
+EVOLUTION_TIME = int(4.5e4) #ns
 CONTROL_EVAL_COUNT = SYSTEM_EVAL_COUNT = int(EVOLUTION_TIME)
 
 INITIAL_STATE_0 = anp.kron(CAVITY_ZERO, TRANSMON_G)

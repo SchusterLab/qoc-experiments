@@ -5,7 +5,7 @@
 \begin{document}
 
 \begin{center}
-  {\huge Schuster Lab - Summer 2019 Report} \\[0.5em]
+  {\huge Schuster Lab - Multimode QOC Report} \\[0.5em]
   {\large Thomas Propson $\vert$ \href{mailto:tcpropson@uchicago.edu}
     {tcpropson@uchicago.edu} \\[0.5em] \today}
 \end{center}
@@ -384,7 +384,7 @@ We will use 20 cavity levels and two transmon levels. This is motivated by exper
 
 Experiment 8 will attempt to achieve the state transfer $\ket{0, g} \rightarrow \ket{1, g}$.
 
-\section{Experiment 9}
+\subsection{Experiment 9}
 The system hamiltonian in the rotating frame for the piccolo under blockade is
 \begin{align*}
   H &= 2 \cdot \chi \cdot (a^{\dagger}a - n_{0}) \ket{e} \bra{e}\\
@@ -399,7 +399,7 @@ where
       Parameter & Value\\
       \hline
       $\chi$          & $2 \pi \cdot -5.644535742521878 \cdot 10^{-4}$ GHz\\
-      $\kappa$        & $2 \pi \cdot -3.36 \cdot 10^{-6}$ GHz\\
+      $\kappa$        & $2 \pi \cdot -2.82 \cdot 10^{-6}$ GHz\\
       $\Omega$        & $2 \pi \cdot 1.44 \cdot 10^{-4}$ GHz\\
       $MAX\_BANDWIDTH$ & $2 \cdot \Omega$\\
       $MAX\_AMPLITUDE$ & $2 \pi \cdot 1.5 \cdot 10^{-5}$ GHz\\
@@ -413,7 +413,7 @@ Experiment 9 will attempt to achieve the state transfer
   \ket{0, g} \rightarrow \ket{1, g}
 \end{align*}
 
-\section{Experiment 10}
+\subsection{Experiment 10}
 Experiment 10 will follow the blockade setup of experiment 9. It will
 attempt the state transfer
 \begin{align*}
@@ -421,6 +421,10 @@ attempt the state transfer
   \ket{1, g} \rightarrow \ket{2, g}
   \ket{2, g} \rightarrow \ket{0, g}
 \end{align*}
+
+\subsection{Experiment 11}
+Experiment 11 will attempt to do a state transfer $\ket{0, g} \rightarrow \ket{1, g}$
+on the piccolo system with SNAP gates. The system hamiltonian is
 
 \bibliography{/home/tcpropson/repos/multimode-qoc/report/report/bib}
 \bibliographystyle{plainnat}
