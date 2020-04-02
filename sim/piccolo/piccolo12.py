@@ -25,7 +25,11 @@ from qoc.standard import (
 # Define paths
 META_NAME = "piccolo"
 EXPERIMENT_NAME = "piccolo12"
-SAVE_PATH = os.path.join(os.environ["MULTIMODE_QOC_PATH"], "out", EXPERIMENT_NAME)
+if "MULTIMODE_QOC_PATH" in os.environ:
+    BASE_PATH = os.environ["MULTIMODE_QOC_PATH"]
+else:
+    BASE_PATH = "."
+SAVE_PATH = os.path.join(BASE_PATH, "out", META_NAME, EXPERIMENT_NAME)
 
 # Define experimental constants. All units are in GHz.
 CAVITY_FREQ = 2 * np.pi * 4.4526
@@ -118,7 +122,7 @@ OPTIMIZER = Adam(learning_rate=LEARNING_RATE)
 ITERATION_COUNT = int(5e2)
 GRAB_CONTROLS = False
 if GRAB_CONTROLS:
-    controls_path = os.path.join(SAVE_PATH, "00000_piccolo12.h5")
+    controls_path = os.path.join(SAVE_PATH, "00008_piccolo12.h5")
     controls_path_lock = "{}.lock".format(controls_path)
     with FileLock(controls_path_lock):
         with h5py.File(controls_path) as save_file:
