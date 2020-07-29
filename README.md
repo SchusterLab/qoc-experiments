@@ -1,2 +1,2 @@
-# multimode-qoc
-- This repository houses the quantum optimal control experiments for the multimode project.  
+# qoc-experiments
+- This repository houses quantum optimal control code and templates for projects in the lab.
