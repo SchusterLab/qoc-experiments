@@ -23,3 +23,6 @@ out
 **/__pycache__
 *.pyc
 *.egg-info
+
+# julia
+Manifest.toml
