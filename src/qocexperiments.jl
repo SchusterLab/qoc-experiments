@@ -8,6 +8,7 @@ import Pkg
 Pkg.activate(WDIR)
 
 # imports
+import Base
 using HDF5
 using LinearAlgebra
 using Plots
@@ -34,14 +35,6 @@ end
     ilqr = 1
     alilqr = 2
     altro = 3
-end
-
-
-@enum IntegratorType begin
-    rk2 = 1
-    rk3 = 2
-    rk4 = 3
-    # rk6 = 4
 end
 
 
@@ -198,3 +191,63 @@ end
 
 
 @inline get_vec_unviso(vec) = reshape(vec, (Int(sqrt(length(vec))), Int(sqrt(length(vec)))))
+
+# Adapted from implementation in StaticArrays
+# https://github.com/JuliaArrays/StaticArrays.jl/blob/master/src/expm.jl
+# Adapted from implementation in Base; algorithm from
+# Higham, "Functions of Matrices: Theory and Computation", SIAM, 2008
+function Base.exp(_A::AbstractMatrix{T}) where T
+    S = typeof((zero(T)*zero(T) + zero(T)*zero(T))/one(T))
+    A = S.(_A)
+    # omitted: matrix balancing, i.e., LAPACK.gebal!
+    nA = maximum(sum(abs.(A); dims=1))    # marginally more performant than norm(A, 1)
+    ## For sufficiently small nA, use lower order Padé-Approximations
+    if (nA <= 2.1)
+        A2 = A*A
+        if nA > 0.95
+            U = @evalpoly(A2, S(8821612800)*I, S(302702400)*I, S(2162160)*I, S(3960)*I, S(1)*I)
+            U = A*U
+            V = @evalpoly(A2, S(17643225600)*I, S(2075673600)*I, S(30270240)*I, S(110880)*I, S(90)*I)
+        elseif nA > 0.25
+            U = @evalpoly(A2, S(8648640)*I, S(277200)*I, S(1512)*I, S(1)*I)
+            U = A*U
+            V = @evalpoly(A2, S(17297280)*I, S(1995840)*I, S(25200)*I, S(56)*I)
+        elseif nA > 0.015
+            U = @evalpoly(A2, S(15120)*I, S(420)*I, S(1)*I)
+            U = A*U
+            V = @evalpoly(A2, S(30240)*I, S(3360)*I, S(30)*I)
+        else
+            U = @evalpoly(A2, S(60)*I, S(1)*I)
+            U = A*U
+            V = @evalpoly(A2, S(120)*I, S(12)*I)
+        end
+        expA = (V - U) \ (V + U)
+    else
+        s  = log2(nA/5.4)               # power of 2 later reversed by squaring
+        if s > 0
+            si = ceil(Int,s)
+            A = A / S(2^si)
+        end
+
+        A2 = A*A
+        A4 = A2*A2
+        A6 = A2*A4
+
+        U = A6*(S(1)*A6 + S(16380)*A4 + S(40840800)*A2) +
+            (S(33522128640)*A6 + S(10559470521600)*A4 + S(1187353796428800)*A2) +
+            S(32382376266240000)*I
+        U = A*U
+        V = A6*(S(182)*A6 + S(960960)*A4 + S(1323241920)*A2) +
+            (S(670442572800)*A6 + S(129060195264000)*A4 + S(7771770303897600)*A2) +
+            S(64764752532480000)*I
+        expA = (V - U) \ (V + U)
+
+        if s > 0            # squaring to reverse dividing by power of 2
+            for t=1:si
+                expA = expA*expA
+            end
+        end
+    end
+
+    expA
+end

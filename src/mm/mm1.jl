@@ -24,14 +24,21 @@ const CONTROL_COUNT = 4
 const STATE_COUNT = 1
 const ASTATE_SIZE_BASE = STATE_COUNT * HDIM_ISO + 2 * CONTROL_COUNT
 const ACONTROL_SIZE = CONTROL_COUNT #+ 1
+# # state indices
+# const STATE1_IDX = SVector{HDIM_ISO}(1:HDIM_ISO)
+# const CONTROLS_IDX = SVector{CONTROL_COUNT}(
+#     STATE1_IDX[end] + 1:STATE1_IDX[end] + CONTROL_COUNT)
+# const DCONTROLS_IDX = SVector{CONTROL_COUNT}(
+#     CONTROLS_IDX[end] + 1:CONTROLS_IDX[end] + CONTROL_COUNT)
+# # control indices
+# const D2CONTROLS_IDX = SVector{CONTROL_COUNT}(1:CONTROL_COUNT)
+# const DT_IDX = D2CONTROLS_IDX[end] + 1:D2CONTROLS_IDX[end] + 1
 # state indices
-const STATE1_IDX = SVector{HDIM_ISO}(1:HDIM_ISO)
-const CONTROLS_IDX = SVector{CONTROL_COUNT}(
-    STATE1_IDX[end] + 1:STATE1_IDX[end] + CONTROL_COUNT)
-const DCONTROLS_IDX = SVector{CONTROL_COUNT}(
-    CONTROLS_IDX[end] + 1:CONTROLS_IDX[end] + CONTROL_COUNT)
+const STATE1_IDX = 1:HDIM_ISO
+const CONTROLS_IDX = STATE1_IDX[end] + 1:STATE1_IDX[end] + CONTROL_COUNT
+const DCONTROLS_IDX = CONTROLS_IDX[end] + 1:CONTROLS_IDX[end] + CONTROL_COUNT
 # control indices
-const D2CONTROLS_IDX = SVector{CONTROL_COUNT}(1:CONTROL_COUNT)
+const D2CONTROLS_IDX = 1:CONTROL_COUNT
 const DT_IDX = D2CONTROLS_IDX[end] + 1:D2CONTROLS_IDX[end] + 1
 
 # model
@@ -41,14 +48,16 @@ end
 @inline RD.control_dim(::Model) = ACONTROL_SIZE
 
 # dynamics
-function RD.discrete_dynamics(::Type{RK3}, model::Model, astate::SVector,
-                              acontrol::SVector, time::Real, dt::Real)
+abstract type EXP <: RD.Explicit end
+
+function RD.discrete_dynamics(::Type{EXP}, model::Model, astate::AbstractVector,
+                              acontrol::AbstractVector, time::Real, dt::Real)
     negi_h = (
-        NEGI_H0ROT_ISO
-        + astate[CONTROLS_IDX[1]] * NEGI_H1R_ISO
-        + astate[CONTROLS_IDX[2]] * NEGI_H1I_ISO
-        + astate[CONTROLS_IDX[3]] * NEGI_H2R_ISO
-        + astate[CONTROLS_IDX[4]] * NEGI_H2I_ISO
+        NEGI_H0ROT_ISO_
+        + astate[CONTROLS_IDX[1]] * NEGI_H1R_ISO_
+        + astate[CONTROLS_IDX[2]] * NEGI_H1I_ISO_
+        + astate[CONTROLS_IDX[3]] * NEGI_H2R_ISO_
+        + astate[CONTROLS_IDX[4]] * NEGI_H2I_ISO_
     )
     h_prop = exp(negi_h * dt)
     state1 =  h_prop * astate[STATE1_IDX]
@@ -62,13 +71,12 @@ function RD.discrete_dynamics(::Type{RK3}, model::Model, astate::SVector,
     return astate_
 end
 
-
-function run_traj(;fock_state=0, evolution_time=2000., dt_inv=DT_PREF_INV, verbose=true,
-                  sqrtbp=false, derivative_order=0, integrator_type=rk3,
+function run_traj(;fock_state=0, evolution_time=800., dt_inv=1., verbose=true,
+                  sqrtbp=false, derivative_order=0,
                   qs=[1e0, 1e-1, 1e-1, 1e-1],
                   smoke_test=false, constraint_tol=1e-8, al_tol=1e-4,
                   pn_steps=2, max_penalty=1e11, save=true, max_iterations=Int64(2e5),
-                  max_cost_value=1e8, benchmark=false, static_bp=true)
+                  max_cost_value=1e8, benchmark=false, static_bp=false)
     model = Model()
     n_ = state_dim(model)
     m_ = control_dim(model)
@@ -76,44 +84,54 @@ function run_traj(;fock_state=0, evolution_time=2000., dt_inv=DT_PREF_INV, verbo
 
     # initial state
     x0 = zeros(n_)
-    x0[STATE1_IDX] = IS1_ISO
-    x0 = SVector{n_}(x0)
+    x0[STATE1_IDX] = IS1_ISO_
+    # x0 = SVector{n_}(x0)
 
     # target state
     xf = zeros(n_)
     cavity_state = zeros(CAVITY_STATE_COUNT)
     cavity_state[fock_state + 1] = 1
     xf[STATE1_IDX] = get_vec_iso(kron(cavity_state, TRANSMON_G))
-    xf = SVector{n_}(xf)
+    # xf = SVector{n_}(xf)
 
     # control amplitude constraint at boundary
     x_max = fill(Inf, n_)
     x_max[CONTROLS_IDX[1:2]] .= MAX_AMP_NORM_TRANSMON
     x_max[CONTROLS_IDX[3:4]] .= MAX_AMP_NORM_CAVITY
-    x_max = SVector{n_}(x_max)
+    # x_max = SVector{n_}(x_max)
+    u_max = fill(Inf, m_)
     x_min = fill(-Inf, n_)
     x_min[CONTROLS_IDX[1:2]] .= -MAX_AMP_NORM_TRANSMON
     x_min[CONTROLS_IDX[3:4]] .= -MAX_AMP_NORM_CAVITY
-    x_min = SVector{n_}(x_min)
-
+    # x_min = SVector{n_}(x_min)
+    u_min = fill(-Inf, m_)
     # control amplitude constraint at boundary
     x_max_boundary = fill(Inf, n_)
     x_max_boundary[CONTROLS_IDX] .= 0
-    x_max_boundary = SVector{n_}(x_max_boundary)
+    # x_max_boundary = SVector{n_}(x_max_boundary)
+    u_max_boundary = fill(Inf, m_)
     x_min_boundary = fill(-Inf, n_)
     x_min_boundary[CONTROLS_IDX] .= 0
-    x_min_boundary = SVector{n_}(x_min_boundary)
+    # x_min_boundary = SVector{n_}(x_min_boundary)
+    u_min_boundary = fill(-Inf, m_)
 
     # initial trajectory
     dt = dt_inv^(-1)
     N_ = Int(floor(evolution_time * dt_inv)) + 1
-    U0 = [SVector{m_}([
+    # U0 = [SVector{m_}([
+    #     fill(1e-6, 2);
+    #     fill(1e-6, 2);
+    # ]) for k = 1:N_-1]
+    # X0 = [SVector{n_}([
+    #     fill(NaN, n_);
+    # ]) for k = 1:N_]
+    U0 = [[
         fill(1e-6, 2);
         fill(1e-6, 2);
-    ]) for k = 1:N_-1]
-    X0 = [SVector{n_}([
+    ] for k = 1:N_-1]
+    X0 = [[
         fill(NaN, n_);
-    ]) for k = 1:N_]
+    ] for k = 1:N_]
     Z = Traj(X0, U0, dt * ones(N_))
     
     # cost function
@@ -121,17 +139,20 @@ function run_traj(;fock_state=0, evolution_time=2000., dt_inv=DT_PREF_INV, verbo
     Q[STATE1_IDX] .= qs[1]
     Q[CONTROLS_IDX] .= qs[2]
     Q[DCONTROLS_IDX] .= qs[3]
-    Q = Diagonal(SVector{n_}(Q))
+    # Q = Diagonal(SVector{n_}(Q))
+    Q = Diagonal(Q)
     Qf = Q * N_
     R = zeros(m_)
     R[D2CONTROLS_IDX] .= qs[4]
-    R = Diagonal(SVector{m_}(R))
+    # R = Diagonal(SVector{m_}(R))
+    R = Diagonal(R)
     objective = LQRObjective(Q, R, Qf, xf, N_)
 
     # must satisfy control amplitude constraints
-    control_amp = BoundConstraint(n_, m_, x_max=x_max, x_min=x_min)
+    control_amp = BoundConstraint(n_, m_; x_max=x_max, x_min=x_min, u_max=u_max, u_min=u_min)
     # must statisfy controls start and stop at 0
-    control_amp_boundary = BoundConstraint(n_, m_, x_max=x_max_boundary, x_min=x_min_boundary)
+    control_amp_boundary = BoundConstraint(n_, m_; x_max=x_max_boundary, x_min=x_min_boundary,
+                                           u_max=u_max_boundary, u_min=u_min_boundary)
     # must reach target state, must have integral of controls = 0
     target_astate_constraint = GoalConstraint(xf, STATE1_IDX)
     
@@ -141,7 +162,7 @@ function run_traj(;fock_state=0, evolution_time=2000., dt_inv=DT_PREF_INV, verbo
     add_constraint!(constraints, control_amp_boundary, N_-1:N_-1)
     add_constraint!(constraints, target_astate_constraint, N_:N_)
     
-    prob = Problem{RK3}(model, objective, constraints, x0, xf, Z, N_, t0, evolution_time)
+    prob = Problem{EXP}(model, objective, constraints, x0, xf, Z, N_, t0, evolution_time)
     solver = ALTROSolver(prob)
     verbose_pn = verbose ? true : false
     verbose_ = verbose ? 2 : 0
@@ -196,7 +217,6 @@ function run_traj(;fock_state=0, evolution_time=2000., dt_inv=DT_PREF_INV, verbo
         "constraint_tol" => constraint_tol,
         "al_tol" => al_tol,
         "save_type" => Integer(jl),
-        "integrator_type" => Integer(integrator_type),
         "iterations" => iterations_,
         "max_iterations" => max_iterations,
         "pn_steps" => pn_steps,

@@ -35,7 +35,7 @@ const MAX_AMP_NORM_CAVITY = 2 * pi * 4e-4
 
 # Define the system.
 const TRANSMON_STATE_COUNT = 2
-const CAVITY_STATE_COUNT = 5
+const CAVITY_STATE_COUNT = 2
 const HDIM = TRANSMON_STATE_COUNT * CAVITY_STATE_COUNT
 const HDIM_ISO = 2 * HDIM
 
@@ -73,43 +73,50 @@ const CAVITY_ONE = [0; 1; zeros(CAVITY_STATE_COUNT - 2)]
 # We define all of our hamiltonians as -1im * H so that when we write
 # the schroedinger equation dynamics we don't have to do extra
 # multiplication.
-const NEGI_H0_ISO = SMatrix{HDIM_ISO, HDIM_ISO}(get_mat_iso(
+const NEGI_H0_ISO_ = get_mat_iso(
     - 1im * (
         TRANSMON_FREQ * kron(CAVITY_ID, TRANSMON_E * TRANSMON_E')
         + CHI_E_2 * kron(CAVITY_NUMBER, TRANSMON_E * TRANSMON_E')
         + CAVITY_FREQ_2 * kron(CAVITY_NUMBER, TRANSMON_ID)
         + (KAPPA_2 / 2) * kron(CAVITY_QUAD, TRANSMON_ID)
     )
-))
-const NEGI_H0ROT_ISO = SMatrix{HDIM_ISO, HDIM_ISO}(get_mat_iso(
+)
+const NEGI_H0_ISO = SMatrix{HDIM_ISO, HDIM_ISO}(NEGI_H0_ISO_)
+const NEGI_H0ROT_ISO_ = get_mat_iso(
     - 1im * (
         # TRANSMON_FREQ * kron(CAVITY_ID, TRANSMON_E * TRANSMON_E')
         + CHI_E_2 * kron(CAVITY_NUMBER, TRANSMON_E * TRANSMON_E')
         # + CAVITY_FREQ_2 * kron(CAVITY_NUMBER, TRANSMON_ID)
         + (KAPPA_2 / 2) * kron(CAVITY_QUAD, TRANSMON_ID)
     )
-))
+)
+const NEGI_H0ROT_ISO = SMatrix{HDIM_ISO, HDIM_ISO}(NEGI_H0ROT_ISO_)
 
 # Control hamiltonians.
 # Complex automatic differentiation in julia is not fully supported yet,
 # so we do the same u(t) a + conj(u(t)) a_dagger where u = ux + i uy
 # business.
 # Transmon drive.
-const NEGI_H1R_ISO = SMatrix{HDIM_ISO, HDIM_ISO}(get_mat_iso(
+const NEGI_H1R_ISO_ = get_mat_iso(
     -1im * kron(CAVITY_ID, TRANSMON_G * TRANSMON_E' + TRANSMON_E * TRANSMON_G')
-))
-const NEGI_H1I_ISO = SMatrix{HDIM_ISO, HDIM_ISO}(get_mat_iso(
+)
+const NEGI_H1R_ISO = SMatrix{HDIM_ISO, HDIM_ISO}(NEGI_H1R_ISO_)
+const NEGI_H1I_ISO_ = get_mat_iso(
     -1im * kron(CAVITY_ID, 1im * (TRANSMON_G * TRANSMON_E' - TRANSMON_E * TRANSMON_G'))
-))
+)
+const NEGI_H1I_ISO = SMatrix{HDIM_ISO, HDIM_ISO}(NEGI_H1I_ISO_)
 # Cavity drive.
-const NEGI_H2R_ISO = SMatrix{HDIM_ISO, HDIM_ISO}(get_mat_iso(
+const NEGI_H2R_ISO_ = get_mat_iso(
     -1im * kron(CAVITY_ANNIHILATE + CAVITY_CREATE, TRANSMON_ID)
-))
-const NEGI_H2I_ISO = SMatrix{HDIM_ISO, HDIM_ISO}(get_mat_iso(
+)
+const NEGI_H2R_ISO = SMatrix{HDIM_ISO, HDIM_ISO}(NEGI_H2R_ISO_)
+const NEGI_H2I_ISO_ = get_mat_iso(
     -1im * kron(1im * (CAVITY_ANNIHILATE - CAVITY_CREATE), TRANSMON_ID)
-))
+)
+const NEGI_H2I_ISO = SMatrix{HDIM_ISO, HDIM_ISO}(NEGI_H2I_ISO_)
 
 # Initial states.
-const IS1_ISO = SVector{HDIM_ISO}(get_vec_iso(
+const IS1_ISO_ = get_vec_iso(
     kron(CAVITY_ZERO, TRANSMON_G)
-))
+)
+const IS1_ISO = SVector{HDIM_ISO}(IS1_ISO_)
