@@ -1,5 +1,5 @@
 """
-mm1.jl - first multimode experiment
+mm1s.jl - first multimode experiment w/ sparsity
 """
 
 WDIR = joinpath(@__DIR__, "../..")
@@ -9,6 +9,7 @@ using Altro
 using HDF5
 using LinearAlgebra
 using RobotDynamics
+using SparseArrays
 using StaticArrays
 using TrajectoryOptimization
 const RD = RobotDynamics
@@ -41,14 +42,20 @@ end
 # dynamics
 abstract type EXP <: RD.Explicit end
 
+const NEGI_H0ROT_ISO_ = sparse(NEGI_H0ROT_ISO)
+const NEGI_H1R_ISO_ = sparse(NEGI_H1R_ISO)
+const NEGI_H1I_ISO_ = sparse(NEGI_H1I_ISO)
+const NEGI_H2R_ISO_ = sparse(NEGI_H2R_ISO)
+const NEGI_H2I_ISO_ = sparse(NEGI_H2I_ISO)
+
 function RD.discrete_dynamics(::Type{EXP}, model::Model, astate::AbstractVector,
                               acontrol::AbstractVector, time::Real, dt::Real)
     negi_h = (
-        NEGI_H0ROT_ISO
-        + astate[CONTROLS_IDX[1]] * NEGI_H1R_ISO
-        + astate[CONTROLS_IDX[2]] * NEGI_H1I_ISO
-        + astate[CONTROLS_IDX[3]] * NEGI_H2R_ISO
-        + astate[CONTROLS_IDX[4]] * NEGI_H2I_ISO
+        NEGI_H0ROT_ISO_
+        + astate[CONTROLS_IDX[1]] * NEGI_H1R_ISO_
+        + astate[CONTROLS_IDX[2]] * NEGI_H1I_ISO_
+        + astate[CONTROLS_IDX[3]] * NEGI_H2R_ISO_
+        + astate[CONTROLS_IDX[4]] * NEGI_H2I_ISO_
     )
     h_prop = exp_(negi_h * dt)
     state1 =  h_prop * astate[STATE1_IDX]

@@ -1,11 +1,13 @@
 """
-mm1.jl - first multimode experiment
+mm1g.jl - multimode experiment
 """
 
 WDIR = joinpath(@__DIR__, "../..")
 include(joinpath(WDIR, "src", "mm", "mm.jl"))
 
 using Altro
+using CUDA
+using CUDA.CUSPARSE
 using HDF5
 using LinearAlgebra
 using RobotDynamics
@@ -16,21 +18,28 @@ const TO = TrajectoryOptimization
 
 # paths
 const EXPERIMENT_META = "mm"
-const EXPERIMENT_NAME = "mm1"
+const EXPERIMENT_NAME = "mm1g"
 const SAVE_PATH = abspath(joinpath(WDIR, "out", EXPERIMENT_META, EXPERIMENT_NAME))
 
 # problem
 const CONTROL_COUNT = 4
 const STATE_COUNT = 1
 const ASTATE_SIZE_BASE = STATE_COUNT * HDIM_ISO + 2 * CONTROL_COUNT
-const ACONTROL_SIZE = CONTROL_COUNT #+ 1
+const ACONTROL_SIZE = CONTROL_COUNT
 # state indices
-const STATE1_IDX = 1:HDIM_ISO
-const CONTROLS_IDX = STATE1_IDX[end] + 1:STATE1_IDX[end] + CONTROL_COUNT
-const DCONTROLS_IDX = CONTROLS_IDX[end] + 1:CONTROLS_IDX[end] + CONTROL_COUNT
+const STATE1_IDX = CuArray(1:HDIM_ISO)
+const CONTROLS_IDX = CuArray(STATE1_IDX[end] + 1:STATE1_IDX[end] + CONTROL_COUNT)
+const DCONTROLS_IDX = CuArray(CONTROLS_IDX[end] + 1:CONTROLS_IDX[end] + CONTROL_COUNT)
 # control indices
-const D2CONTROLS_IDX = 1:CONTROL_COUNT
-const DT_IDX = D2CONTROLS_IDX[end] + 1:D2CONTROLS_IDX[end] + 1
+const D2CONTROLS_IDX = CuArray(1:CONTROL_COUNT)
+const DT_IDX = CuArray(D2CONTROLS_IDX[end] + 1:D2CONTROLS_IDX[end] + 1)
+# hamiltonians
+# TODO CuSparseMatrixCSC, addition not currently available
+const NEGI_H0ROT_ISO_ = CuArray(NEGI_H0ROT_ISO)
+const NEGI_H1R_ISO_ = CuArray(NEGI_H1R_ISO)
+const NEGI_H1I_ISO_ = CuArray(NEGI_H1I_ISO)
+const NEGI_H2R_ISO_ = CuArray(NEGI_H2R_ISO)
+const NEGI_H2I_ISO_ = CuArray(NEGI_H2I_ISO)
 
 # model
 struct Model <: AbstractModel
@@ -44,11 +53,11 @@ abstract type EXP <: RD.Explicit end
 function RD.discrete_dynamics(::Type{EXP}, model::Model, astate::AbstractVector,
                               acontrol::AbstractVector, time::Real, dt::Real)
     negi_h = (
-        NEGI_H0ROT_ISO
-        + astate[CONTROLS_IDX[1]] * NEGI_H1R_ISO
-        + astate[CONTROLS_IDX[2]] * NEGI_H1I_ISO
-        + astate[CONTROLS_IDX[3]] * NEGI_H2R_ISO
-        + astate[CONTROLS_IDX[4]] * NEGI_H2I_ISO
+        NEGI_H0ROT_ISO_
+        + astate[CONTROLS_IDX[1]] * NEGI_H1R_ISO_
+        + astate[CONTROLS_IDX[2]] * NEGI_H1I_ISO_
+        + astate[CONTROLS_IDX[3]] * NEGI_H2R_ISO_
+        + astate[CONTROLS_IDX[4]] * NEGI_H2I_ISO_
     )
     h_prop = exp_(negi_h * dt)
     state1 =  h_prop * astate[STATE1_IDX]
@@ -76,40 +85,51 @@ function run_traj(;fock_state=0, evolution_time=800., dt_inv=1., verbose=true,
     # initial state
     x0 = zeros(n_)
     x0[STATE1_IDX] = IS1_ISO
+    x0 = CuArray(x0)
 
     # target state
     xf = zeros(n_)
     cavity_state = zeros(CAVITY_STATE_COUNT)
     cavity_state[fock_state + 1] = 1
     xf[STATE1_IDX] = get_vec_iso(kron(cavity_state, TRANSMON_G))
+    xf = CuArray(xf)
+    uf = CUDA.zeros(Float64, m_)
 
     # control amplitude constraint at boundary
     x_max = fill(Inf, n_)
     x_max[CONTROLS_IDX[1:2]] .= MAX_AMP_NORM_TRANSMON
     x_max[CONTROLS_IDX[3:4]] .= MAX_AMP_NORM_CAVITY
+    x_max = CuArray(x_max)
     u_max = fill(Inf, m_)
+    u_max = CuArray(u_max)
     x_min = fill(-Inf, n_)
     x_min[CONTROLS_IDX[1:2]] .= -MAX_AMP_NORM_TRANSMON
     x_min[CONTROLS_IDX[3:4]] .= -MAX_AMP_NORM_CAVITY
+    x_min = CuArray(x_min)
     u_min = fill(-Inf, m_)
+    u_min = CuArray(u_min)
     # control amplitude constraint at boundary
     x_max_boundary = fill(Inf, n_)
     x_max_boundary[CONTROLS_IDX] .= 0
+    x_max_boundary = CuArray(x_max_boundary)
     u_max_boundary = fill(Inf, m_)
+    u_max_boundary = CuArray(u_max_boundary)
     x_min_boundary = fill(-Inf, n_)
     x_min_boundary[CONTROLS_IDX] .= 0
+    x_min_boundary = CuArray(x_min_boundary)
     u_min_boundary = fill(-Inf, m_)
+    u_min_boundary = CuArray(u_min_boundary)
 
     # initial trajectory
     dt = dt_inv^(-1)
     N_ = Int(floor(evolution_time * dt_inv)) + 1
-    U0 = [[
+    U0 = [CuArray([
         fill(1e-6, 2);
         fill(1e-6, 2);
-    ] for k = 1:N_-1]
-    X0 = [[
+    ]) for k = 1:N_-1]
+    X0 = [CuArray([
         fill(NaN, n_);
-    ] for k = 1:N_]
+    ]) for k = 1:N_]
     Z = Traj(X0, U0, dt * ones(N_))
     
     # cost function
@@ -117,14 +137,12 @@ function run_traj(;fock_state=0, evolution_time=800., dt_inv=1., verbose=true,
     Q[STATE1_IDX] .= qs[1]
     Q[CONTROLS_IDX] .= qs[2]
     Q[DCONTROLS_IDX] .= qs[3]
-    # Q = Diagonal(SVector{n_}(Q))
-    Q = Diagonal(Q)
+    Q = Diagonal(CuArray(Q))
     Qf = Q * N_
     R = zeros(m_)
     R[D2CONTROLS_IDX] .= qs[4]
-    # R = Diagonal(SVector{m_}(R))
-    R = Diagonal(R)
-    objective = LQRObjective(Q, R, Qf, xf, N_)
+    R = Diagonal(CuArray(R))
+    objective = LQRObjective(Q, R, Qf, xf, N_; uf=uf)
 
     # must satisfy control amplitude constraints
     control_amp = BoundConstraint(n_, m_; x_max=x_max, x_min=x_min, u_max=u_max, u_min=u_min)

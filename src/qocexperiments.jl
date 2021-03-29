@@ -37,6 +37,11 @@ end
     altro = 3
 end
 
+@enum ArrayType begin
+    cpu = 1
+    gpu = 2
+end
+
 
 # methods
 function generate_file_path(extension, file_name, path)
@@ -196,7 +201,7 @@ end
 # https://github.com/JuliaArrays/StaticArrays.jl/blob/master/src/expm.jl
 # Adapted from implementation in Base; algorithm from
 # Higham, "Functions of Matrices: Theory and Computation", SIAM, 2008
-function Base.exp(_A::AbstractMatrix{T}) where T
+function exp_(_A::AbstractMatrix{T}) where T
     S = typeof((zero(T)*zero(T) + zero(T)*zero(T))/one(T))
     A = S.(_A)
     # omitted: matrix balancing, i.e., LAPACK.gebal!
