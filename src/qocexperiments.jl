@@ -9,6 +9,7 @@ Pkg.activate(WDIR)
 
 # imports
 import Base
+using CUDA
 using HDF5
 using LinearAlgebra
 using Plots
@@ -203,7 +204,7 @@ end
 # Higham, "Functions of Matrices: Theory and Computation", SIAM, 2008
 function exp_(_A::AbstractMatrix{T}) where T
     S = typeof((zero(T)*zero(T) + zero(T)*zero(T))/one(T))
-    A = S.(_A)
+    A = _A # S.(_A)
     # omitted: matrix balancing, i.e., LAPACK.gebal!
     nA = maximum(sum(abs.(A); dims=1))    # marginally more performant than norm(A, 1)
     ## For sufficiently small nA, use lower order Padé-Approximations
@@ -256,3 +257,60 @@ function exp_(_A::AbstractMatrix{T}) where T
 
     expA
 end
+
+
+# # Taken from
+# # https://github.com/JuliaGPU/CUDA.jl/blob/621972b4cb3e386dbbd43f2cd873325e59c8d60f/lib/cusolver/dense.jl#L106
+# function CUDA.CUSOLVER.getrf!(A::CuMatrix)
+#     show_nice(A)
+#     m,n = size(A)
+#     lda = max(1, stride(A, 2))
+
+#     devipiv = CuArray{Cint}(undef, min(m,n))
+#     devinfo = CuArray{Cint}(undef, 1)
+#     CUDA.@workspace eltyp=Float64 size=CUDA.@argout(
+#         CUDA.CUSOLVER.cusolverDnDgetrf_bufferSize(CUDA.CUSOLVER.dense_handle(), m, n, A, lda, out(Ref{Cint}(0)))
+#         )[] buffer->begin
+#             CUDA.CUSOLVER.cusolverDnDgetrf(CUDA.CUSOLVER.dense_handle(), m, n, A, lda, buffer, devipiv, devinfo)
+#         end
+
+#     info = CUDA.@allowscalar devinfo[1]
+#     CUDA.unsafe_free!(devinfo)
+#     println(devipiv)
+#     # if info < 0
+#     #     throw(ArgumentError("The $(info)th parameter is wrong"))
+#     # elseif info > 0
+#     #     throw(LinearAlgebra.SingularException(info))
+#     # end
+
+#     A, devipiv
+# end
+
+
+# # Taken from
+# # https://github.com/JuliaGPU/CUDA.jl/blob/621972b4cb3e386dbbd43f2cd873325e59c8d60f/lib/cusolver/dense.jl#L197
+# function CUDA.CUSOLVER.getrs!(trans::Char,
+#                               A::CuMatrix,
+#                               ipiv::CuVector{Cint},
+#                               B::CuVecOrMat)
+#     n = size(A, 1)
+#     if size(A, 2) != n
+#         throw(DimensionMismatch("LU factored matrix A must be square!"))
+#     end
+#     if size(B, 1) != n
+#         throw(DimensionMismatch("first dimension of B, $(size(B,1)), must match second dimension of A, $n"))
+#     end
+#     nrhs = size(B, 2)
+#     lda  = max(1, stride(A, 2))
+#     ldb  = max(1, stride(B, 2))
+
+#     devinfo = CuArray{Cint}(undef, 1)
+#     CUDA.CUSOLVER.cusolverDnDgetrs(CUDA.CUSOLVER.dense_handle(), trans, n, nrhs, A, lda, ipiv, B, ldb, devinfo)
+
+#     info = CUDA.@allowscalar devinfo[1]
+#     CUDA.unsafe_free!(devinfo)
+#     if info < 0
+#         throw(ArgumentError("The $(info)th parameter is wrong"))
+#     end
+#     B
+# end
