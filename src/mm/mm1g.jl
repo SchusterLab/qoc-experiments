@@ -145,10 +145,12 @@ function run_traj(;fock_state=0, evolution_time=800., dt_inv=1., verbose=true,
     objective = LQRObjective(Q, R, Qf, xf, N_; uf=uf)
 
     # must satisfy control amplitude constraints
-    control_amp = BoundConstraint(n_, m_; x_max=x_max, x_min=x_min, u_max=u_max, u_min=u_min)
+    control_amp = BoundConstraint(n_, m_; x_max=x_max, x_min=x_min, u_max=u_max, u_min=u_min,
+                                  vtype=CuVector)
     # must statisfy controls start and stop at 0
     control_amp_boundary = BoundConstraint(n_, m_; x_max=x_max_boundary, x_min=x_min_boundary,
-                                           u_max=u_max_boundary, u_min=u_min_boundary)
+                                           u_max=u_max_boundary, u_min=u_min_boundary,
+                                           vtype=CuVector)
     # must reach target state, must have integral of controls = 0
     target_astate_constraint = GoalConstraint(xf, STATE1_IDX)
     
