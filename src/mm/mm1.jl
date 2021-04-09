@@ -6,6 +6,7 @@ WDIR = joinpath(@__DIR__, "../..")
 include(joinpath(WDIR, "src", "mm", "mm.jl"))
 
 using Altro
+using ForwardDiff
 using HDF5
 using LinearAlgebra
 using RobotDynamics
@@ -46,7 +47,7 @@ end
 # dynamics
 abstract type EXP <: RD.Explicit end
 
-function RD.discrete_dynamics(::Type{EXP}, model::Model, astate::AbstractVector,
+function _discrete_dynamics(::Type{EXP}, model::Model, astate::AbstractVector,
                               acontrol::AbstractVector, time::Real, dt::Real)
     negi_h = (
         NEGI_H0ROT_ISO
@@ -60,15 +61,40 @@ function RD.discrete_dynamics(::Type{EXP}, model::Model, astate::AbstractVector,
     controls = astate[CONTROLS_IDX] + astate[DCONTROLS_IDX] * dt
     dcontrols = astate[DCONTROLS_IDX] + acontrol[D2CONTROLS_IDX] * dt
 
-    astate_ = [
-        state1; controls; dcontrols;
-    ]
+    return state1, controls, dcontrols
+end
 
-    return astate_
+function RD.discrete_dynamics(::Type{EXP}, model::Model,
+                              astate::AbstractVector,
+                              acontrol::AbstractVector, time::Real, dt::Real)
+    state1, controls, dcontrols = _discrete_dynamics(EXP, model, astate, acontrol, time, dt)
+    return [state1; controls; dcontrols]
+end
+
+function RD.discrete_dynamics!(astate_::AbstractVector, ::Type{EXP}, model::Model,
+                               astate::AbstractVector,
+                               acontrol::AbstractVector, time::Real, dt::Real)
+    state1, controls, dcontrols = _discrete_dynamics(EXP, model, astate, acontrol, time, dt)
+    astate_[STATE1_IDX] .= state1
+    astate_[CONTROLS_IDX] .= controls
+    astate_[DCONTROLS_IDX] .= dcontrols
+    return nothing
+end
+
+function RD.discrete_jacobian!(D::AbstractMatrix, A::AbstractMatrix, B::AbstractMatrix,
+                               ::Type{EXP}, model::Model, astate::AbstractVector,
+                               acontrol::AbstractVector, time::Real, dt::Real,
+                               ix::AbstractVector, iu::AbstractVector)
+    f(x) = RD.discrete_dynamics(EXP, model, x, acontrol, time, dt)
+    ForwardDiff.jacobian!(A, f, astate)
+    B .= 0
+    for i = 1:CONTROL_COUNT
+        B[DCONTROLS_IDX[i], i] = dt
+    end
 end
 
 
-function run_traj(;fock_state=0, evolution_time=800., dt_inv=1., verbose=true,
+function run_traj(;fock_state=0, evolution_time=200., dt_inv=1., verbose=true,
                   sqrtbp=false, derivative_order=0,
                   qs=[1e0, 1e-1, 1e-1, 1e-1],
                   smoke_test=false, constraint_tol=1e-8, al_tol=1e-4,
@@ -93,67 +119,69 @@ function run_traj(;fock_state=0, evolution_time=800., dt_inv=1., verbose=true,
     x_max = fill(Inf, n_)
     x_max[CONTROLS_IDX[1:2]] .= MAX_AMP_NORM_TRANSMON
     x_max[CONTROLS_IDX[3:4]] .= MAX_AMP_NORM_CAVITY
-    u_max = fill(Inf, m_)
+    x_max = V(x_max)
+    u_max = V(fill(Inf, m_))
     x_min = fill(-Inf, n_)
     x_min[CONTROLS_IDX[1:2]] .= -MAX_AMP_NORM_TRANSMON
     x_min[CONTROLS_IDX[3:4]] .= -MAX_AMP_NORM_CAVITY
-    u_min = fill(-Inf, m_)
+    x_min = V(x_min)
+    u_min = V(fill(-Inf, m_))
     # control amplitude constraint at boundary
     x_max_boundary = fill(Inf, n_)
     x_max_boundary[CONTROLS_IDX] .= 0
-    u_max_boundary = fill(Inf, m_)
+    x_max_boundary = V(x_max_boundary)
+    u_max_boundary = V(fill(Inf, m_))
     x_min_boundary = fill(-Inf, n_)
     x_min_boundary[CONTROLS_IDX] .= 0
-    u_min_boundary = fill(-Inf, m_)
+    x_min_boundary = V(x_min_boundary)
+    u_min_boundary = V(fill(-Inf, m_))
 
     # initial trajectory
     N_ = Int(floor(evolution_time * dt_inv)) + 1
-    X0 = [zeros(n_) for k = 1:N_]
-    X0[1] = x0
-    U0 = [[
+    X0 = [V(zeros(n_)) for k = 1:N_]
+    X0[1] .= x0
+    U0 = [V([
         fill(1e-6, 2);
         fill(1e-6, 2);
-    ] for k = 1:N_-1]
+    ]) for k = 1:N_-1]
     dt = dt_inv^(-1)
-    ts = zeros(N_)
+    ts = V(zeros(N_))
     ts[1] = t0
     for k = 1:N_-1
         ts[k + 1] = ts[k] + dt
-        X0[k + 1] = RD.discrete_dynamics(EXP, model, X0[k], U0[k], ts[k], dt)
+        RD.discrete_dynamics!(X0[k + 1], EXP, model, X0[k], U0[k], ts[k], dt)
     end
     
     # cost function
-    Q = zeros(n_)
+    Q = V(zeros(n_))
     Q[STATE1_IDX] .= qs[1]
     Q[CONTROLS_IDX] .= qs[2]
     Q[DCONTROLS_IDX] .= qs[3]
     # Q = Diagonal(SVector{n_}(Q))
     Q = Diagonal(Q)
     Qf = Q * N_
-    R = zeros(m_)
+    R = V(zeros(m_))
     R[D2CONTROLS_IDX] .= qs[4]
     # R = Diagonal(SVector{m_}(R))
     R = Diagonal(R)
-    stage_cost = LQRCost(Q, xf; R=R)
-    terminal_cost = LQRCost(Qf, xf; terminal=true)
-    objective = Objective(stage_cost, terminal_cost, N_)
+    objective = LQRObjective(Q, Qf, R, xf, n_, m_, N_, M, V)
 
     # must satisfy control amplitude constraints
-    control_amp = BoundConstraint(n_, m_, x_max, x_min, u_max, u_min)
+    control_amp = BoundConstraint(n_, m_, x_max, x_min, u_max, u_min, M, V)
     # must statisfy controls start and stop at 0
     control_amp_boundary = BoundConstraint(n_, m_, x_max_boundary, x_min_boundary,
-                                           u_max_boundary, u_min_boundary)
+                                           u_max_boundary, u_min_boundary, M, V)
     # must reach target state, must have integral of controls = 0
-    target_astate_constraint = GoalConstraint(xf, STATE1_IDX)
-    
-    constraints = TO.ConstraintList(n_, m_, N_)
-    # add_constraint!(constraints, control_amp, 2:N_-2)
-    # add_constraint!(constraints, control_amp_boundary, 1:1)
-    # add_constraint!(constraints, control_amp_boundary, N_-1:N_-1)
-    # add_constraint!(constraints, target_astate_constraint, N_:N_)
+    target_astate_constraint = GoalConstraint(n_, m_, xf, STATE1_IDX, M, V)
+
+    constraints = TO.ConstraintList()
+    add_constraint!(constraints, control_amp, V(2:N_-2))
+    add_constraint!(constraints, control_amp_boundary, V(1:1))
+    add_constraint!(constraints, control_amp_boundary, V(N_-1:N_-1))
+    add_constraint!(constraints, target_astate_constraint, V(N_:N_))
     
     prob = Problem(EXP, model, objective, constraints, X0, U0, ts, N_, M, V)
-    solver = iLQRSolver(prob)
+    solver = AugmentedLagrangianSolver(prob)
     verbose_pn = verbose ? true : false
     verbose_ = verbose ? 2 : 0
     iterations_inner = smoke_test ? 1 : 300
@@ -174,9 +202,9 @@ function run_traj(;fock_state=0, evolution_time=800., dt_inv=1., verbose=true,
     end
 
     # post-process
-    acontrols_raw = solver.U
+    acontrols_raw = TO.controls(solver)
     acontrols_arr = permutedims(reduce(hcat, map(Array, acontrols_raw)), [2, 1])
-    astates_raw = solver.X
+    astates_raw = TO.states(solver)
     astates_arr = permutedims(reduce(hcat, map(Array, astates_raw)), [2, 1])
     Q_raw = Array(Q)
     Q_arr = [Q_raw[i, i] for i in 1:size(Q_raw)[1]]
