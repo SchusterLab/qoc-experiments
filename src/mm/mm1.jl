@@ -6,6 +6,7 @@ WDIR = joinpath(@__DIR__, "../..")
 include(joinpath(WDIR, "src", "mm", "mm.jl"))
 
 using Altro
+using ForwardDiff
 using HDF5
 using LinearAlgebra
 using RobotDynamics
@@ -28,20 +29,25 @@ const ACONTROL_SIZE = CONTROL_COUNT #+ 1
 const STATE1_IDX = 1:HDIM_ISO
 const CONTROLS_IDX = STATE1_IDX[end] + 1:STATE1_IDX[end] + CONTROL_COUNT
 const DCONTROLS_IDX = CONTROLS_IDX[end] + 1:CONTROLS_IDX[end] + CONTROL_COUNT
+const ASTATE_IDX = Array(1:DCONTROLS_IDX[end])
 # control indices
 const D2CONTROLS_IDX = 1:CONTROL_COUNT
 const DT_IDX = D2CONTROLS_IDX[end] + 1:D2CONTROLS_IDX[end] + 1
+const ACONTROL_IDX = Array(1:D2CONTROLS_IDX[end])
 
 # model
 struct Model <: AbstractModel
 end
 @inline RD.state_dim(::Model) = ASTATE_SIZE_BASE
 @inline RD.control_dim(::Model) = ACONTROL_SIZE
+# vector and matrix constructors (use CPU arrays)
+@inline M(mat_) = Array(mat_)
+@inline V(vec_) = Array(vec_)
 
 # dynamics
 abstract type EXP <: RD.Explicit end
 
-function RD.discrete_dynamics(::Type{EXP}, model::Model, astate::AbstractVector,
+function _discrete_dynamics(::Type{EXP}, model::Model, astate::AbstractVector,
                               acontrol::AbstractVector, time::Real, dt::Real)
     negi_h = (
         NEGI_H0ROT_ISO
@@ -55,14 +61,40 @@ function RD.discrete_dynamics(::Type{EXP}, model::Model, astate::AbstractVector,
     controls = astate[CONTROLS_IDX] + astate[DCONTROLS_IDX] * dt
     dcontrols = astate[DCONTROLS_IDX] + acontrol[D2CONTROLS_IDX] * dt
 
-    astate_ = [
-        state1; controls; dcontrols;
-    ]
-
-    return astate_
+    return state1, controls, dcontrols
 end
 
-function run_traj(;fock_state=0, evolution_time=800., dt_inv=1., verbose=true,
+function RD.discrete_dynamics(::Type{EXP}, model::Model,
+                              astate::AbstractVector,
+                              acontrol::AbstractVector, time::Real, dt::Real)
+    state1, controls, dcontrols = _discrete_dynamics(EXP, model, astate, acontrol, time, dt)
+    return [state1; controls; dcontrols]
+end
+
+function RD.discrete_dynamics!(astate_::AbstractVector, ::Type{EXP}, model::Model,
+                               astate::AbstractVector,
+                               acontrol::AbstractVector, time::Real, dt::Real)
+    state1, controls, dcontrols = _discrete_dynamics(EXP, model, astate, acontrol, time, dt)
+    astate_[STATE1_IDX] .= state1
+    astate_[CONTROLS_IDX] .= controls
+    astate_[DCONTROLS_IDX] .= dcontrols
+    return nothing
+end
+
+function RD.discrete_jacobian!(D::AbstractMatrix, A::AbstractMatrix, B::AbstractMatrix,
+                               ::Type{EXP}, model::Model, astate::AbstractVector,
+                               acontrol::AbstractVector, time::Real, dt::Real,
+                               ix::AbstractVector, iu::AbstractVector)
+    f(x) = RD.discrete_dynamics(EXP, model, x, acontrol, time, dt)
+    ForwardDiff.jacobian!(A, f, astate)
+    B .= 0
+    for i = 1:CONTROL_COUNT
+        B[DCONTROLS_IDX[i], i] = dt
+    end
+end
+
+
+function run_traj(;fock_state=0, evolution_time=200., dt_inv=1., verbose=true,
                   sqrtbp=false, derivative_order=0,
                   qs=[1e0, 1e-1, 1e-1, 1e-1],
                   smoke_test=false, constraint_tol=1e-8, al_tol=1e-4,
@@ -87,61 +119,69 @@ function run_traj(;fock_state=0, evolution_time=800., dt_inv=1., verbose=true,
     x_max = fill(Inf, n_)
     x_max[CONTROLS_IDX[1:2]] .= MAX_AMP_NORM_TRANSMON
     x_max[CONTROLS_IDX[3:4]] .= MAX_AMP_NORM_CAVITY
-    u_max = fill(Inf, m_)
+    x_max = V(x_max)
+    u_max = V(fill(Inf, m_))
     x_min = fill(-Inf, n_)
     x_min[CONTROLS_IDX[1:2]] .= -MAX_AMP_NORM_TRANSMON
     x_min[CONTROLS_IDX[3:4]] .= -MAX_AMP_NORM_CAVITY
-    u_min = fill(-Inf, m_)
+    x_min = V(x_min)
+    u_min = V(fill(-Inf, m_))
     # control amplitude constraint at boundary
     x_max_boundary = fill(Inf, n_)
     x_max_boundary[CONTROLS_IDX] .= 0
-    u_max_boundary = fill(Inf, m_)
+    x_max_boundary = V(x_max_boundary)
+    u_max_boundary = V(fill(Inf, m_))
     x_min_boundary = fill(-Inf, n_)
     x_min_boundary[CONTROLS_IDX] .= 0
-    u_min_boundary = fill(-Inf, m_)
+    x_min_boundary = V(x_min_boundary)
+    u_min_boundary = V(fill(-Inf, m_))
 
     # initial trajectory
-    dt = dt_inv^(-1)
     N_ = Int(floor(evolution_time * dt_inv)) + 1
-    U0 = [[
+    X0 = [V(zeros(n_)) for k = 1:N_]
+    X0[1] .= x0
+    U0 = [V([
         fill(1e-6, 2);
         fill(1e-6, 2);
-    ] for k = 1:N_-1]
-    X0 = [[
-        fill(NaN, n_);
-    ] for k = 1:N_]
-    Z = Traj(X0, U0, dt * ones(N_))
+    ]) for k = 1:N_-1]
+    dt = dt_inv^(-1)
+    ts = V(zeros(N_))
+    ts[1] = t0
+    for k = 1:N_-1
+        ts[k + 1] = ts[k] + dt
+        RD.discrete_dynamics!(X0[k + 1], EXP, model, X0[k], U0[k], ts[k], dt)
+    end
     
     # cost function
-    Q = zeros(n_)
+    Q = V(zeros(n_))
     Q[STATE1_IDX] .= qs[1]
     Q[CONTROLS_IDX] .= qs[2]
     Q[DCONTROLS_IDX] .= qs[3]
     # Q = Diagonal(SVector{n_}(Q))
     Q = Diagonal(Q)
     Qf = Q * N_
-    R = zeros(m_)
+    R = V(zeros(m_))
     R[D2CONTROLS_IDX] .= qs[4]
     # R = Diagonal(SVector{m_}(R))
     R = Diagonal(R)
-    objective = LQRObjective(Q, R, Qf, xf, N_)
+    objective = LQRObjective(Q, Qf, R, xf, n_, m_, N_, M, V)
 
     # must satisfy control amplitude constraints
-    control_amp = BoundConstraint(n_, m_; x_max=x_max, x_min=x_min, u_max=u_max, u_min=u_min)
+    control_amp = BoundConstraint(n_, m_, x_max, x_min, u_max, u_min, M, V)
     # must statisfy controls start and stop at 0
-    control_amp_boundary = BoundConstraint(n_, m_; x_max=x_max_boundary, x_min=x_min_boundary,
-                                           u_max=u_max_boundary, u_min=u_min_boundary)
+    control_amp_boundary = BoundConstraint(n_, m_, x_max_boundary, x_min_boundary,
+                                           u_max_boundary, u_min_boundary, M, V)
     # must reach target state, must have integral of controls = 0
-    target_astate_constraint = GoalConstraint(xf, STATE1_IDX)
+    target_astate_constraint = GoalConstraint(n_, m_, xf, STATE1_IDX, M, V)
+
+    constraints = TO.ConstraintList()
+    add_constraint!(constraints, control_amp, V(2:N_-2))
+    add_constraint!(constraints, control_amp_boundary, V(1:1))
+    add_constraint!(constraints, control_amp_boundary, V(N_-1:N_-1))
+    add_constraint!(constraints, target_astate_constraint, V(N_:N_))
     
-    constraints = TO.ConstraintList(n_, m_, N_)
-    add_constraint!(constraints, control_amp, 2:N_-2)
-    add_constraint!(constraints, control_amp_boundary, 1:1)
-    add_constraint!(constraints, control_amp_boundary, N_-1:N_-1)
-    add_constraint!(constraints, target_astate_constraint, N_:N_)
-    
-    prob = Problem{EXP}(model, objective, constraints, x0, xf, Z, N_, t0, evolution_time)
-    solver = ALTROSolver(prob)
+    prob = Problem(EXP, model, objective, constraints, X0, U0, ts, N_, M, V)
+    solver = AugmentedLagrangianSolver(prob)
     verbose_pn = verbose ? true : false
     verbose_ = verbose ? 2 : 0
     iterations_inner = smoke_test ? 1 : 300
@@ -152,7 +192,8 @@ function run_traj(;fock_state=0, evolution_time=800., dt_inv=1., verbose=true,
                  penalty_max=max_penalty, verbose_pn=verbose_pn, verbose=verbose_,
                  projected_newton=true, iterations_inner=iterations_inner,
                  iterations_outer=iterations_outer, iterations=max_iterations,
-                 max_cost_value=max_cost_value, static_bp=static_bp)
+                 max_cost_value=max_cost_value, static_bp=static_bp,
+                 gradient_tolerance=1e-4)
     if benchmark
         benchmark_result = Altro.benchmark_solve!(solver)
     else
@@ -173,8 +214,9 @@ function run_traj(;fock_state=0, evolution_time=800., dt_inv=1., verbose=true,
     R_arr = [R_raw[i, i] for i in 1:size(R_raw)[1]]
     cidx_arr = Array(CONTROLS_IDX)
     d2cidx_arr = Array(D2CONTROLS_IDX)
-    cmax = TrajectoryOptimization.max_violation(solver)
-    cmax_info = TrajectoryOptimization.findmax_violation(TO.get_constraints(solver))
+    # cmax = TO.max_violation(solver)
+    # cmax_info = TO.findmax_violation(TO.get_constraints(solver))
+    cmax = cmax_info = 0
     iterations_ = Altro.iterations(solver)
 
     result = Dict(

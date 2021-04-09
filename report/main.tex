@@ -1,0 +1,77 @@
+\documentclass[
+  amsfonts,
+  amsmath,
+  tbtags,
+  amssymb,
+  aps,
+  nobibnotes,
+  twocolumn,
+  superscriptaddress,
+]{revtex4-2}
+
+\input{preamble}
+
+\begin{document}
+
+\title{QOC Experiments}
+
+\author{Thomas Propson}
+\email{tcpropson@uchicago.edu}
+\affiliation{
+  James Franck Institute, University of Chicago, Chicago, Illinois 60637, USA
+}
+\affiliation{
+  Department of Physics, University of Chicago, Chicago, Illinois 60637, USA
+}
+
+\date{\today}
+
+\begin{abstract}
+  This document details some QOC experiments.
+\end{abstract}
+
+\maketitle
+
+\section{Multimode}
+The Multimode Hamiltonian is given in \cite{chakram2020multimode},
+\begin{align*}
+  H &=  \mathbb{1}_{a} \otimes \omega_{q} \ket{e}\bra{e}\\
+  %% &+ \mathbb{1}_{a} \otimes \omega_{f} \ket{f}\bra{f}\\
+  %% &+ \mathbb{1}_{a} \otimes \frac{\alpha}{2} {b^{\dagger}}^{2}b^{2}\\
+  &+ \chi_{e,m} a_{m}^{\dagger}a_{m} \otimes \ket{e}\bra{e}\\
+  %% &+ \chi_{f} a^{\dagger}a \otimes \ket{f}\bra{f}\\
+  &+ \omega_{m} \ a_{m}^{\dagger}a_{m} \otimes \mathbb{1}_{b}\\
+  &+ \frac{\kappa_{m}}{2} a_{m}^{\dagger} a_{m} (a_{m}^{\dagger}a_{m} - \mathbb{1}_{c}) \otimes \mathbb{1}_{b}\\
+  &+ \mathbb{1}_{a} \otimes \Omega(t) \ket{g}\bra{e} +
+  \mathbb{1}_{a} \otimes \Omega^{*}(t) \ket{e}\bra{g}\\
+  &+ \epsilon(t) a_{m} \otimes \mathbb{1}_{b} + 
+  \epsilon^{*}(t) a_{m}^{\dagger} \otimes \mathbb{1}_{b}
+\end{align*}
+where $\mathbb{1}_{x}$ is the identity matrix
+on subspace $x$. The parameters for this Hamiltonian on mode $m = 2$
+are given in Table \ref{tab:pham}.
+
+\begin{table}[H]
+  \begin{tabular}{c | c}
+    Parameter & Value\\
+    \hline
+    $\omega_{q} /2 \pi$ & $4.99$ GHz\\ %$5.6640$ GHz
+    %% $\omega_{f} /2 \pi$ & \todo{?}\\
+    %% $\alpha /2 \pi$ & $-1.42259 \cdot 10^{-1}$ GHz\\
+    $\chi_{e,m} /2 \pi$ & $-1.33 \cdot 10^{-3}$ GHz\\
+    %% $\chi_{f} /2 \pi$ & \todo{?}\\
+    $\omega_{m} /2 \pi$ & $5.96$ GHz\\
+    $\kappa_{m} /2 \pi$ & $5.23 \cdot 10^{-6}$ GHz\\
+    $\textrm{max}(\Omega / 2 \pi)$ & $4 \cdot 10^{-3}$ GHz\\
+    $\textrm{max}(\epsilon / 2 \pi)$ & $4 \cdot 10^{-4}$ GHz\\
+    $T_{1a}$ & $2.0 \cdot 10^{6}$ ns\\
+    $T_{1b}$ & $7.9 \cdot 10^{4}$ ns\\
+    $T_{2b}$ & $5.8 \cdot 10^{4}$ ns\\
+  \end{tabular}
+  \caption{Parameters for the Multimode Hamiltonian on mode $m = 2$}
+  \label{tab:pham}
+\end{table}
+
+\bibliography{refs}
+
+\end{document}
