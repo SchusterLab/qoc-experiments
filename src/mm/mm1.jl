@@ -6,10 +6,12 @@ WDIR = joinpath(@__DIR__, "../..")
 include(joinpath(WDIR, "src", "mm", "mm.jl"))
 
 using Altro
+using CUDA
 using ForwardDiff
 using HDF5
 using LinearAlgebra
 using RobotDynamics
+using SparseArrays
 using StaticArrays
 using TrajectoryOptimization
 const RD = RobotDynamics
@@ -36,48 +38,60 @@ const DT_IDX = D2CONTROLS_IDX[end] + 1:D2CONTROLS_IDX[end] + 1
 const ACONTROL_IDX = Array(1:D2CONTROLS_IDX[end])
 
 # model
-struct Model <: AbstractModel
+struct Model{TH,Ts} <: AbstractModel
+    H_tmp::Vector{TH}
+    state_tmp::Vector{Ts}
+end
+function Model(M_, V_)
+    H_tmp = [M_(zeros(HDIM_ISO, HDIM_ISO)) for i = 1:5]
+    TH = typeof(H_tmp[1])
+    state_tmp = [V_(zeros(HDIM_ISO)) for i = 1:2]
+    Ts = typeof(state_tmp[1])
+    return Model{TH,Ts}(H_tmp, state_tmp)
 end
 @inline RD.state_dim(::Model) = ASTATE_SIZE_BASE
 @inline RD.control_dim(::Model) = ACONTROL_SIZE
 # vector and matrix constructors (use CPU arrays)
-@inline M(mat_) = Array(mat_)
-@inline V(vec_) = Array(vec_)
+@inline M(mat_) = CuArray(mat_)
+@inline V(vec_) = CuArray(vec_)
 
 # dynamics
 abstract type EXP <: RD.Explicit end
 
-function _discrete_dynamics(::Type{EXP}, model::Model, astate::AbstractVector,
-                              acontrol::AbstractVector, time::Real, dt::Real)
-    negi_h = (
-        NEGI_H0ROT_ISO
-        + astate[CONTROLS_IDX[1]] * NEGI_H1R_ISO
-        + astate[CONTROLS_IDX[2]] * NEGI_H1I_ISO
-        + astate[CONTROLS_IDX[3]] * NEGI_H2R_ISO
-        + astate[CONTROLS_IDX[4]] * NEGI_H2I_ISO
-    )
-    h_prop = exp_(negi_h * dt)
-    state1 =  h_prop * astate[STATE1_IDX]
-    controls = astate[CONTROLS_IDX] + astate[DCONTROLS_IDX] * dt
-    dcontrols = astate[DCONTROLS_IDX] + acontrol[D2CONTROLS_IDX] * dt
-
-    return state1, controls, dcontrols
-end
-
-function RD.discrete_dynamics(::Type{EXP}, model::Model,
-                              astate::AbstractVector,
-                              acontrol::AbstractVector, time::Real, dt::Real)
-    state1, controls, dcontrols = _discrete_dynamics(EXP, model, astate, acontrol, time, dt)
-    return [state1; controls; dcontrols]
-end
+const NEGI_H0ROT_ISO_ = M(NEGI_H0ROT_ISO)
+const NEGI_H1R_ISO_ = M(NEGI_H1R_ISO)
+const NEGI_H1I_ISO_ = M(NEGI_H1I_ISO)
+const NEGI_H2R_ISO_ = M(NEGI_H2R_ISO)
+const NEGI_H2I_ISO_ = M(NEGI_H2I_ISO)
 
 function RD.discrete_dynamics!(astate_::AbstractVector, ::Type{EXP}, model::Model,
                                astate::AbstractVector,
                                acontrol::AbstractVector, time::Real, dt::Real)
-    state1, controls, dcontrols = _discrete_dynamics(EXP, model, astate, acontrol, time, dt)
-    astate_[STATE1_IDX] .= state1
-    astate_[CONTROLS_IDX] .= controls
-    astate_[DCONTROLS_IDX] .= dcontrols
+    # get hamiltonian and unitary
+    H = model.H_tmp[1]
+    H1r = model.H_tmp[2] .= NEGI_H1R_ISO_
+    lmul!(astate[CONTROLS_IDX[1]], H1r)
+    H1i = model.H_tmp[3] .= NEGI_H1I_ISO_
+    lmul!(astate[CONTROLS_IDX[2]], H1i)
+    H2r = model.H_tmp[4] .= NEGI_H2R_ISO_
+    lmul!(astate[CONTROLS_IDX[3]], H2r)
+    H2i = model.H_tmp[5] .= NEGI_H2I_ISO_
+    lmul!(astate[CONTROLS_IDX[4]], H2i)
+    for i in eachindex(H)
+        H[i] = NEGI_H0ROT_ISO_[i] + H1r[i] + H1i[i] + H2r[i] + H2i[i]
+    end
+    lmul!(dt, H)
+    U = exp_(H)
+    # propagate state
+    mul!(astate_[STATE1_IDX], U, astate[STATE1_IDX])
+    # propagate controls
+    astate_[CONTROLS_IDX] .= astate[DCONTROLS_IDX]
+    astate_[CONTROLS_IDX] .*= dt
+    astate_[CONTROLS_IDX] .+= astate[CONTROLS_IDX]
+    # propagate dcontrols
+    astate_[DCONTROLS_IDX] .= acontrol[D2CONTROLS_IDX]
+    astate_[DCONTROLS_IDX] .*= dt
+    astate_[DCONTROLS_IDX] .+= astate[DCONTROLS_IDX]
     return nothing
 end
 
@@ -85,11 +99,46 @@ function RD.discrete_jacobian!(D::AbstractMatrix, A::AbstractMatrix, B::Abstract
                                ::Type{EXP}, model::Model, astate::AbstractVector,
                                acontrol::AbstractVector, time::Real, dt::Real,
                                ix::AbstractVector, iu::AbstractVector)
-    f(x) = RD.discrete_dynamics(EXP, model, x, acontrol, time, dt)
-    ForwardDiff.jacobian!(A, f, astate)
-    B .= 0
+    # get hamiltonian and unitary
+    H = model.H_tmp[1]
+    H1r = model.H_tmp[2] .= NEGI_H1R_ISO_
+    lmul!(astate[CONTROLS_IDX[1]], H1r)
+    H1i = model.H_tmp[3] .= NEGI_H1I_ISO_
+    lmul!(astate[CONTROLS_IDX[2]], H1i)
+    H2r = model.H_tmp[4] .= NEGI_H2R_ISO_
+    lmul!(astate[CONTROLS_IDX[3]], H2r)
+    H2i = model.H_tmp[5] .= NEGI_H2I_ISO_
+    lmul!(astate[CONTROLS_IDX[4]], H2i)
+    for i in eachindex(H)
+        H[i] = NEGI_H0ROT_ISO_[i] + H1r[i] + H1i[i] + H2r[i] + H2i[i]
+    end
+    lmul!(dt, H)
+    U = exp_(H)
+    # get state at this time step and next
+    state1k = model.state_tmp[1] .= astate[STATE1_IDX]
+    state1kp = model.state_tmp[2]
+    mul!(state1kp, U, state1k)
+    # state1 modifications
+    A[STATE1_IDX, STATE1_IDX] .= U
+    H1r .= NEGI_H1R_ISO_
+    lmul!(dt, H1r)
+    mul!(A[STATE1_IDX, CONTROLS_IDX[1]], exp_frechet!(H, H1r), state1k)
+    H1i .= NEGI_H1I_ISO_
+    lmul!(dt, H1i)
+    mul!(A[STATE1_IDX, CONTROLS_IDX[2]], exp_frechet!(H, H1i; reuse_UV=true), state1k)
+    H2r .= NEGI_H1I_ISO_
+    lmul!(dt, H2r)
+    mul!(A[STATE1_IDX, CONTROLS_IDX[3]], exp_frechet!(H, H2r; reuse_UV=true), state1k)
+    H2i .= NEGI_H2I_ISO_
+    lmul!(dt, H2i)
+    mul!(A[STATE1_IDX, CONTROLS_IDX[4]], exp_frechet!(H, H2i; reuse_UV=true), state1k)
     for i = 1:CONTROL_COUNT
-        B[DCONTROLS_IDX[i], i] = dt
+        # control modifications
+        A[CONTROLS_IDX[i], CONTROLS_IDX[i]] = 1
+        A[CONTROLS_IDX[i], DCONTROLS_IDX[i]] = dt
+        # dcontrol modifications
+        A[DCONTROLS_IDX[i], DCONTROLS_IDX[i]] = 1
+        B[DCONTROLS_IDX[i], D2CONTROLS_IDX[i]] = dt
     end
 end
 
@@ -100,7 +149,7 @@ function run_traj(;fock_state=0, evolution_time=200., dt_inv=1., verbose=true,
                   smoke_test=false, constraint_tol=1e-8, al_tol=1e-4,
                   pn_steps=2, max_penalty=1e11, save=true, max_iterations=Int64(2e5),
                   max_cost_value=1e8, benchmark=false, static_bp=false)
-    model = Model()
+    model = Model(M, V)
     n_ = state_dim(model)
     m_ = control_dim(model)
     t0 = 0.
@@ -108,12 +157,14 @@ function run_traj(;fock_state=0, evolution_time=200., dt_inv=1., verbose=true,
     # initial state
     x0 = zeros(n_)
     x0[STATE1_IDX] = IS1_ISO
+    x0 = V(x0)
 
     # target state
     xf = zeros(n_)
     cavity_state = zeros(CAVITY_STATE_COUNT)
     cavity_state[fock_state + 1] = 1
     xf[STATE1_IDX] = get_vec_iso(kron(cavity_state, TRANSMON_G))
+    xf = V(xf)
 
     # control amplitude constraint at boundary
     x_max = fill(Inf, n_)

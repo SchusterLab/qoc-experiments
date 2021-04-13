@@ -35,7 +35,7 @@ const MAX_AMP_NORM_CAVITY = 2 * pi * 4e-4
 
 # Define the system.
 const TRANSMON_STATE_COUNT = 2
-const CAVITY_STATE_COUNT = 2
+const CAVITY_STATE_COUNT = 5
 const HDIM = TRANSMON_STATE_COUNT * CAVITY_STATE_COUNT
 const HDIM_ISO = 2 * HDIM
 

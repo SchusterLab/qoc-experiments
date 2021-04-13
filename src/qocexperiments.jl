@@ -258,6 +258,202 @@ function exp_(_A::AbstractMatrix{T}) where T
     expA
 end
 
+const L3 = 1.08e-2
+const L5 = 2.0e0-1
+const L7 = 7.83e-1
+const L9 = 1.78e0
+const L13 = 4.74e0
+function exp_frechet!(tmp::Vector{AbstractMatrix}, A::AbstractMatrix, E::AbstractMatrix;
+                      reuse_UV::Bool=false)
+    size_ = size(A, 1)
+    nA = maximum(sum(abs.(A); dims=1))
+    if (nA <= L9)
+        if nA <= L3
+            b0 = 120.; b1 = 60.; b2 = 12.; b3 = 1.
+            if !reuse_UV
+                # compute A
+                A2 = mul!(tmp[1], A, A)
+                # A2 - tmp 1
+                # compute U, V
+                V = tmp[3]
+                for i in eachindex(A)
+                    tmp[4][i] = b3 * A2[i]
+                    V = b2 * A2[i]
+                end
+                for i = 1:size_
+                    tmp[4][i, i] += b1
+                    V[i, i] += b0
+                end
+                U = mul!(tmp[2], A, tmp[4])
+                # U - tmp2
+                # V - tmp3
+            else
+                A2 = tmp[1]
+                U = tmp[2]
+                V = tmp[3]
+            end
+            # compute M
+            M2 = mul!(tmp[4], A, E)
+            mul!(tmp[5], E, A)
+            # M2 - tmp4
+            for i in eachindex(A)
+                M2[i] += tmp[5][i]
+                tmp[5][i] = b3 * M2[i]
+                tmp[6][i] = b3 * A2[i]
+            end
+            for i = 1:size_
+                tmp[6][i, i] += b1
+            end
+            mul!(tmp[7], A, tmp[5])
+            mul!(tmp[8], E, tmp[6])
+            Lu = tmp[5]
+            Lv = tmp[6]
+            VmU = tmp[7]
+            VpU = tmp[8]
+            for i in eachindex(A)
+                Lu[i] = tmp[7][i] + tmp[8][i]
+                Lv[i] = b2 * M2[i]
+                VmU[i] = V[i] - U[i]
+                VpU[i] = V[i] + U[i]
+            end
+            # Lu - tmp5
+            # Lv - tmp6
+            # VmU - tmp7
+            # VpU - tmp8
+            # compute R
+            (R, VmU_LU, VmU_ipiv) = gesv!(VmU, VpU)
+            # VmU_LU - tmp7
+            # R - tmp8
+            # compute L
+            for i in eachindex(A)
+                tmp[10][i] = Lu[i] - Lv[i]
+            end
+            L = mul!(tmp[9], tmp[10], R)
+            for i in eachindex(A)
+                L[i] += Lu[i] + Lv[i]
+            end
+            getrs!("N", VmU_LU, VmU_ipiv, L)
+            # L - tmp9
+            return L
+        elseif nA <= L5
+            U = @evalpoly(A2, S(15120)*I, S(420)*I, S(1)*I)
+            U = A*U
+            V = @evalpoly(A2, S(30240)*I, S(3360)*I, S(30)*I)
+        elseif nA <= L7
+            b0 = 17297280.; b1 = 8648640.; b2 = 1995840.; b3 = 277200.
+            b4 = 25200.; b5 = 1512.; b6 = 56.; b7 = 1.
+        else # nA <= L9
+            b0 = 17643225600.; b1 = 8821612800.; b2 = 2075673600.; b3 = 302702400.
+            b4 = 30270240.; b5 = 2162160.; b6 = 110880.; b7 = 3960.; b8 = 90.; b9 = 1.
+            if !reuse_UV
+                # compute A
+                A2 = mul!(tmp[1], A, A)
+                A4 = mul!(tmp[2], A2, A2)
+                A6 = mul!(tmp[3], A4, A2)
+                A8 = mul!(tmp[4], A4, A4)
+                # A2 - tmp1
+                # A4 - tmp2
+                # A6 - tmp3
+                # A8 - tmp4
+                # compute U, V
+                V = tmp[6]
+                for i in eachindex(A)
+                    tmp[7][i] = b3 * A2[i] + b4 * A4[i] + b7 * A6[i]
+                    V[i] = b2 * A2[i] + b4 * A4[i] + b6 * A6[i] + b8 * A8[i]
+                end
+                for i = 1:size_
+                    tmp[7][i, i] += b1
+                    V[i, i] += b0
+                end
+                U = mul!(tmp[5], A, tmp[7])
+                # U - tmp5
+                # V - tmp6
+            else
+                A2 = tmp[1]
+                A4 = tmp[2]
+                A6 = tmp[3]
+                A8 = tmp[4]
+                U = tmp[5]
+                V = tmp[6]
+            end
+            # compute Ms
+            M2 = mul!(tmp[7], A, E)
+            mul!(tmp[8], E, A)
+            for i in eachindex(A)
+                M2[i] += tmp[8][i]
+            end
+            M4 = mul!(tmp[8], M2, A2)
+            mul!(tmp[9], A2, M2)
+            for i in eachindex(A)
+                M4[i] += tmp[9][i]
+            end
+            M6 = mul!(tmp[9], A4, M2)
+            mul!(tmp[10], M4, A2)
+            for i in eachindex(A)
+                M6[i] += tmp[10][i]
+            end
+            M8 = mul!(tmp[10], A4, M4)
+            mul!(tmp[11], M4, A4)
+            # M2 - tmp7
+            # M4 - tmp8
+            # M6 - tmp9
+            # M8 - tmp10
+            # compute Lu, Lv
+            for i in eachindex(A)
+                M8[i] += tmp[11][i]
+                tmp[11][i] = b9 * M8[i] + b7 * M6[i] + b5 * M4[i] + b3 * M2[i]
+                tmp[12][i] = b9 * A8[i] + b7 * A6[i] + b5 * A4[i] + b3 * A2[i]
+            end
+            for i = 1:size_
+                tmp[12][i, i] += b1
+            end
+            mul!(tmp[13], A, tmp[11])
+            mul!(tmp[14], E, tmp[12])
+            Lu = tmp[11]
+            Lv = tmp[12]
+            VmU = tmp[13]
+            VpU = tmp[14]
+            for i in eachindex(A)
+                Lu[i] = tmp[13][i] + tmp[14][i]
+                Lv[i] = b8 * M8[i] + b6 * M6[i] + b4 * M4[i] + b2 * M2[i]
+                VmU[i] = V[i] - U[i]
+                VpU[i] = V[i] + U[i]
+            end
+            # Lu - tmp11
+            # Lv - tmp12
+            # VmU - tmp13
+            # VpU - tmp14
+            # compute R
+            (R, VmU_LU, VmU_ipiv) = gesv!(VmU, VpU)
+            # VmU_LU - tmp13
+            # R - tmp14
+            # compute L
+            for i in eachindex(A)
+                tmp[16][i] = Lu[i] - Lv[i]
+            end
+            L = mul!(tmp[15], tmp[16], R)
+            for i in eachindex(A)
+                L[i] += Lu[i] + Lv[i]
+            end
+            getrs!("N", VmU_LU, VmU_ipiv, L)
+            # L - tmp15
+            return L
+        end
+    else
+        s = log2(nA/L13)
+        if s > 0
+            si = ceil(Int, s)
+            lmul!(1 / 2^si, A)
+        end
+
+        if s > 0
+            for t=1:si
+                L = R * L + L * R
+            end
+        end
+    end
+end
+
 
 # # Taken from
 # # https://github.com/JuliaGPU/CUDA.jl/blob/621972b4cb3e386dbbd43f2cd873325e59c8d60f/lib/cusolver/dense.jl#L106
