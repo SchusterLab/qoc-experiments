@@ -456,7 +456,9 @@ function exp_frechet!(mtmp::Vector{TM}, mtmp_dense::Vector{TMd},
     end
     mtmp_dense[2] .= L
     L .= getrs!('N', VmU_LU, VmU_ipiv, mtmp_dense[2])
-    # L - mtmp25
+    # don't overwrite mtmp[13] so that multiple exp_frechet!
+    # calls can reuse mtmp[13] for R_unscaled
+    R = mtmp[15] .= mtmp[13]
     # scale up
     if s > 0
         for t = 1:si
@@ -469,6 +471,7 @@ function exp_frechet!(mtmp::Vector{TM}, mtmp_dense::Vector{TMd},
             end
         end
     end
-    
+    # L - mtmp25
+    # R - mtmp15
     return L
 end
