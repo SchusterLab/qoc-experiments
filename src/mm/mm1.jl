@@ -31,59 +31,84 @@ const ACONTROL_SIZE = CONTROL_COUNT #+ 1
 const STATE1_IDX = 1:HDIM_ISO
 const CONTROLS_IDX = STATE1_IDX[end] + 1:STATE1_IDX[end] + CONTROL_COUNT
 const DCONTROLS_IDX = CONTROLS_IDX[end] + 1:CONTROLS_IDX[end] + CONTROL_COUNT
-const ASTATE_IDX = Array(1:DCONTROLS_IDX[end])
 # control indices
 const D2CONTROLS_IDX = 1:CONTROL_COUNT
 const DT_IDX = D2CONTROLS_IDX[end] + 1:D2CONTROLS_IDX[end] + 1
-const ACONTROL_IDX = Array(1:D2CONTROLS_IDX[end])
 
 # model
-struct Model{TH,Ts} <: AbstractModel
-    H_tmp::Vector{TH}
-    state_tmp::Vector{Ts}
+struct Model{TM,TMd,TV,TVi} <: AbstractModel
+    mtmp::Vector{TM}
+    Hs::Vector{TM}
+    mtmp_dense::Vector{TMd}
+    vtmp::Vector{TV}
+    ipiv_tmp::TVi
 end
-function Model(M_, V_)
-    H_tmp = [M_(zeros(HDIM_ISO, HDIM_ISO)) for i = 1:5]
-    TH = typeof(H_tmp[1])
-    state_tmp = [V_(zeros(HDIM_ISO)) for i = 1:2]
-    Ts = typeof(state_tmp[1])
-    return Model{TH,Ts}(H_tmp, state_tmp)
+function Model(M_, Md_, V_, Hs)
+    mtmp = [M_(zeros(HDIM_ISO, HDIM_ISO)) for i = 1:33]
+    TM = typeof(mtmp[1])
+    mtmp_dense = [Md_(zeros(HDIM_ISO, HDIM_ISO)) for i = 1:2]
+    TMd = typeof(mtmp_dense[1])
+    vtmp = [V_(zeros(HDIM_ISO)) for i = 1:3]
+    TV = typeof(vtmp[1])
+    ipiv_tmp = V_(zeros(Int, HDIM_ISO))
+    if ipiv_tmp isa CuVector
+        ipiv_tmp = V_(zeros(Int32, HDIM_ISO))
+    end
+    TVi = typeof(ipiv_tmp)
+    return Model{TM,TMd,TV,TVi}(mtmp, Hs, mtmp_dense, vtmp, ipiv_tmp)
 end
 @inline RD.state_dim(::Model) = ASTATE_SIZE_BASE
 @inline RD.control_dim(::Model) = ACONTROL_SIZE
 # vector and matrix constructors (use CPU arrays)
-@inline M(mat_) = CuArray(mat_)
-@inline V(vec_) = CuArray(vec_)
+@inline M(mat_) = mat_
+@inline Md(mat_) = mat_
+@inline V(vec_) = vec_
 
 # dynamics
 abstract type EXP <: RD.Explicit end
 
-const NEGI_H0ROT_ISO_ = M(NEGI_H0ROT_ISO)
-const NEGI_H1R_ISO_ = M(NEGI_H1R_ISO)
-const NEGI_H1I_ISO_ = M(NEGI_H1I_ISO)
-const NEGI_H2R_ISO_ = M(NEGI_H2R_ISO)
-const NEGI_H2I_ISO_ = M(NEGI_H2I_ISO)
+function RD.discrete_dynamics(::Type{EXP}, model::Model,
+                              astate::AbstractVector,
+                              acontrol::AbstractVector, time::Real, dt::Real)
+    # get hamiltonian and unitary
+    H = dt * (
+        model.Hs[1]
+        + astate[CONTROLS_IDX[1]] * model.Hs[2]
+        + astate[CONTROLS_IDX[2]] * model.Hs[3]
+        + astate[CONTROLS_IDX[3]] * model.Hs[4]
+        + astate[CONTROLS_IDX[4]] * model.Hs[5]
+    )
+    U = exp(H)
+    # propagate state
+    state1 = U * astate[STATE1_IDX]
+    # propagate controls
+    controls = astate[DCONTROLS_IDX] .* dt + astate[CONTROLS_IDX]
+    # propagate dcontrols
+    dcontrols = acontrol[D2CONTROLS_IDX] .* dt + astate[DCONTROLS_IDX]
+    return [state1; controls; dcontrols]
+end
 
 function RD.discrete_dynamics!(astate_::AbstractVector, ::Type{EXP}, model::Model,
                                astate::AbstractVector,
                                acontrol::AbstractVector, time::Real, dt::Real)
     # get hamiltonian and unitary
-    H = model.H_tmp[1]
-    H1r = model.H_tmp[2] .= NEGI_H1R_ISO_
+    H = model.mtmp[29]
+    H1r = model.mtmp[30] .= model.Hs[2]
     lmul!(astate[CONTROLS_IDX[1]], H1r)
-    H1i = model.H_tmp[3] .= NEGI_H1I_ISO_
+    H1i = model.mtmp[31] .= model.Hs[3]
     lmul!(astate[CONTROLS_IDX[2]], H1i)
-    H2r = model.H_tmp[4] .= NEGI_H2R_ISO_
+    H2r = model.mtmp[32] .= model.Hs[4]
     lmul!(astate[CONTROLS_IDX[3]], H2r)
-    H2i = model.H_tmp[5] .= NEGI_H2I_ISO_
+    H2i = model.mtmp[33] .= model.Hs[5]
     lmul!(astate[CONTROLS_IDX[4]], H2i)
     for i in eachindex(H)
-        H[i] = NEGI_H0ROT_ISO_[i] + H1r[i] + H1i[i] + H2r[i] + H2i[i]
+        H[i] = model.Hs[1][i] + H1r[i] + H1i[i] + H2r[i] + H2i[i]
     end
     lmul!(dt, H)
-    U = exp_(H)
+    U = exp!(model.mtmp, model.mtmp_dense, model.ipiv_tmp, H)
     # propagate state
-    mul!(astate_[STATE1_IDX], U, astate[STATE1_IDX])
+    mul!(model.vtmp[1], U, astate[STATE1_IDX])
+    astate_[STATE1_IDX] .= model.vtmp[1]
     # propagate controls
     astate_[CONTROLS_IDX] .= astate[DCONTROLS_IDX]
     astate_[CONTROLS_IDX] .*= dt
@@ -100,38 +125,46 @@ function RD.discrete_jacobian!(D::AbstractMatrix, A::AbstractMatrix, B::Abstract
                                acontrol::AbstractVector, time::Real, dt::Real,
                                ix::AbstractVector, iu::AbstractVector)
     # get hamiltonian and unitary
-    H = model.H_tmp[1]
-    H1r = model.H_tmp[2] .= NEGI_H1R_ISO_
+    H = model.mtmp[29]
+    H1r = model.mtmp[30] .= model.Hs[2]
     lmul!(astate[CONTROLS_IDX[1]], H1r)
-    H1i = model.H_tmp[3] .= NEGI_H1I_ISO_
+    H1i = model.mtmp[31] .= model.Hs[3]
     lmul!(astate[CONTROLS_IDX[2]], H1i)
-    H2r = model.H_tmp[4] .= NEGI_H2R_ISO_
+    H2r = model.mtmp[32] .= model.Hs[4]
     lmul!(astate[CONTROLS_IDX[3]], H2r)
-    H2i = model.H_tmp[5] .= NEGI_H2I_ISO_
+    H2i = model.mtmp[33] .= model.Hs[5]
     lmul!(astate[CONTROLS_IDX[4]], H2i)
     for i in eachindex(H)
-        H[i] = NEGI_H0ROT_ISO_[i] + H1r[i] + H1i[i] + H2r[i] + H2i[i]
+        H[i] = model.Hs[1][i] + H1r[i] + H1i[i] + H2r[i] + H2i[i]
     end
     lmul!(dt, H)
-    U = exp_(H)
+    U = exp!(model.mtmp, model.mtmp_dense, model.ipiv_tmp, H)
     # get state at this time step and next
-    state1k = model.state_tmp[1] .= astate[STATE1_IDX]
-    state1kp = model.state_tmp[2]
+    state1k = model.vtmp[1] .= astate[STATE1_IDX]
+    state1kp = model.vtmp[2]
     mul!(state1kp, U, state1k)
     # state1 modifications
     A[STATE1_IDX, STATE1_IDX] .= U
-    H1r .= NEGI_H1R_ISO_
+    H1r .= model.Hs[2]
     lmul!(dt, H1r)
-    mul!(A[STATE1_IDX, CONTROLS_IDX[1]], exp_frechet!(H, H1r), state1k)
-    H1i .= NEGI_H1I_ISO_
+    mul!(model.vtmp[3], exp_frechet!(model.mtmp, model.mtmp_dense, model.ipiv_tmp,
+                                     H, H1r; reuse=true), state1k)
+    A[STATE1_IDX, CONTROLS_IDX[1]] .= model.vtmp[3]
+    H1i .= model.Hs[3]
     lmul!(dt, H1i)
-    mul!(A[STATE1_IDX, CONTROLS_IDX[2]], exp_frechet!(H, H1i; reuse_UV=true), state1k)
-    H2r .= NEGI_H1I_ISO_
+    mul!(model.vtmp[3], exp_frechet!(model.mtmp, model.mtmp_dense, model.ipiv_tmp,
+                                     H, H1i; reuse=true), state1k)
+    A[STATE1_IDX, CONTROLS_IDX[2]] .= model.vtmp[3]
+    H2r .= model.Hs[4]
     lmul!(dt, H2r)
-    mul!(A[STATE1_IDX, CONTROLS_IDX[3]], exp_frechet!(H, H2r; reuse_UV=true), state1k)
-    H2i .= NEGI_H2I_ISO_
+    mul!(model.vtmp[3], exp_frechet!(model.mtmp, model.mtmp_dense, model.ipiv_tmp,
+                                     H, H2r; reuse=true), state1k)
+    A[STATE1_IDX, CONTROLS_IDX[3]] .= model.vtmp[3]
+    H2i .= model.Hs[5]
     lmul!(dt, H2i)
-    mul!(A[STATE1_IDX, CONTROLS_IDX[4]], exp_frechet!(H, H2i; reuse_UV=true), state1k)
+    mul!(model.vtmp[3], exp_frechet!(model.mtmp, model.mtmp_dense, model.ipiv_tmp,
+                                     H, H2i; reuse=true), state1k)
+    A[STATE1_IDX, CONTROLS_IDX[4]] .= model.vtmp[3]
     for i = 1:CONTROL_COUNT
         # control modifications
         A[CONTROLS_IDX[i], CONTROLS_IDX[i]] = 1
@@ -149,7 +182,8 @@ function run_traj(;fock_state=0, evolution_time=200., dt_inv=1., verbose=true,
                   smoke_test=false, constraint_tol=1e-8, al_tol=1e-4,
                   pn_steps=2, max_penalty=1e11, save=true, max_iterations=Int64(2e5),
                   max_cost_value=1e8, benchmark=false, static_bp=false)
-    model = Model(M, V)
+    Hs = [M(H) for H in (NEGI_H0ROT_ISO, NEGI_H1R_ISO, NEGI_H1I_ISO, NEGI_H2R_ISO, NEGI_H2I_ISO)]
+    model = Model(M, Md, V, Hs)
     n_ = state_dim(model)
     m_ = control_dim(model)
     t0 = 0.
@@ -231,7 +265,7 @@ function run_traj(;fock_state=0, evolution_time=200., dt_inv=1., verbose=true,
     add_constraint!(constraints, control_amp_boundary, V(N_-1:N_-1))
     add_constraint!(constraints, target_astate_constraint, V(N_:N_))
     
-    prob = Problem(EXP, model, objective, constraints, X0, U0, ts, N_, M, V)
+    prob = Problem(EXP, model, objective, constraints, X0, U0, ts, N_, M, Md, V)
     solver = AugmentedLagrangianSolver(prob)
     verbose_pn = verbose ? true : false
     verbose_ = verbose ? 2 : 0
