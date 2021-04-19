@@ -43,6 +43,7 @@ struct Model{TM,TMd,TV,TVi} <: AbstractModel
     vtmp::Vector{TV}
     ipiv_tmp::TVi
 end
+
 function Model(M_, Md_, V_, Hs)
     mtmp = [M_(zeros(HDIM_ISO, HDIM_ISO)) for i = 1:33]
     TM = typeof(mtmp[1])
@@ -176,12 +177,11 @@ function RD.discrete_jacobian!(D::AbstractMatrix, A::AbstractMatrix, B::Abstract
 end
 
 
-function run_traj(;fock_state=0, evolution_time=200., dt_inv=1., verbose=true,
-                  sqrtbp=false, derivative_order=0,
-                  qs=[1e0, 1e-1, 1e-1, 1e-1],
-                  smoke_test=false, constraint_tol=1e-8, al_tol=1e-4,
+function run_traj(;fock_state=0, evolution_time=2000., dt=1., verbose=true,
+                  derivative_order=1, qs=[1e0, 1e-1, 1e-1, 1e-1], smoke_test=false,
                   pn_steps=2, max_penalty=1e11, save=true, max_iterations=Int64(2e5),
-                  max_cost_value=1e8, benchmark=false, static_bp=false)
+                  max_cost=1e8, benchmark=false, ilqr_ctol=1e-2, ilqr_gtol=1e-4,
+                  ilqr_max_iterations=300)
     Hs = [M(H) for H in (NEGI_H0ROT_ISO, NEGI_H1R_ISO, NEGI_H1I_ISO, NEGI_H2R_ISO, NEGI_H2I_ISO)]
     model = Model(M, Md, V, Hs)
     n_ = state_dim(model)
@@ -222,14 +222,13 @@ function run_traj(;fock_state=0, evolution_time=200., dt_inv=1., verbose=true,
     u_min_boundary = V(fill(-Inf, m_))
 
     # initial trajectory
-    N_ = Int(floor(evolution_time * dt_inv)) + 1
+    N_ = Int(floor(evolution_time / dt)) + 1
     X0 = [V(zeros(n_)) for k = 1:N_]
     X0[1] .= x0
     U0 = [V([
         fill(1e-6, 2);
         fill(1e-6, 2);
     ]) for k = 1:N_-1]
-    dt = dt_inv^(-1)
     ts = V(zeros(N_))
     ts[1] = t0
     for k = 1:N_-1
@@ -242,12 +241,10 @@ function run_traj(;fock_state=0, evolution_time=200., dt_inv=1., verbose=true,
     Q[STATE1_IDX] .= qs[1]
     Q[CONTROLS_IDX] .= qs[2]
     Q[DCONTROLS_IDX] .= qs[3]
-    # Q = Diagonal(SVector{n_}(Q))
     Q = Diagonal(Q)
     Qf = Q * N_
     R = V(zeros(m_))
     R[D2CONTROLS_IDX] .= qs[4]
-    # R = Diagonal(SVector{m_}(R))
     R = Diagonal(R)
     objective = LQRObjective(Q, Qf, R, xf, n_, m_, N_, M, V)
 
@@ -257,40 +254,41 @@ function run_traj(;fock_state=0, evolution_time=200., dt_inv=1., verbose=true,
     control_amp_boundary = BoundConstraint(n_, m_, x_max_boundary, x_min_boundary,
                                            u_max_boundary, u_min_boundary, M, V)
     # must reach target state, must have integral of controls = 0
-    target_astate_constraint = GoalConstraint(n_, m_, xf, STATE1_IDX, M, V)
-
-    constraints = TO.ConstraintList()
+    target_astate_constraint = TO.GoalConstraint(n_, m_, xf, STATE1_IDX, M, V)
+    # build constraints
+    constraints = TO.ConstraintList(n_, m_, N_, M, V)
     add_constraint!(constraints, control_amp, V(2:N_-2))
     add_constraint!(constraints, control_amp_boundary, V(1:1))
     add_constraint!(constraints, control_amp_boundary, V(N_-1:N_-1))
     add_constraint!(constraints, target_astate_constraint, V(N_:N_))
-    
+    # build problem
     prob = Problem(EXP, model, objective, constraints, X0, U0, ts, N_, M, Md, V)
-    solver = AugmentedLagrangianSolver(prob)
+    # options
     verbose_pn = verbose ? true : false
     verbose_ = verbose ? 2 : 0
-    iterations_inner = smoke_test ? 1 : 300
-    iterations_outer = smoke_test ? 1 : 30
+    ilqr_max_iterations = smoke_test ? 1 : ilqr_max_iterations
+    al_max_iterations = smoke_test ? 1 : 30
     n_steps = smoke_test ? 1 : pn_steps
-    set_options!(solver, square_root=sqrtbp, constraint_tolerance=constraint_tol,
-                 projected_newton_tolerance=al_tol, n_steps=n_steps,
-                 penalty_max=max_penalty, verbose_pn=verbose_pn, verbose=verbose_,
-                 projected_newton=true, iterations_inner=iterations_inner,
-                 iterations_outer=iterations_outer, iterations=max_iterations,
-                 max_cost_value=max_cost_value, static_bp=static_bp,
-                 gradient_tolerance=1e-4)
+    opts = SolverOptions(
+        penalty_max=max_penalty, verbose_pn=verbose_pn, verbose=verbose_,
+        projected_newton=true, ilqr_max_iterations=ilqr_max_iterations,
+        al_max_iterations=al_max_iterations,
+        iterations=max_iterations,
+        max_cost_value=max_cost, ilqr_ctol=ilqr_ctol, ilqr_gtol=ilqr_gtol,
+    )
+    # solve
+    solver = ALTROSolver(prob, opts)
     if benchmark
         benchmark_result = Altro.benchmark_solve!(solver)
     else
         benchmark_result = nothing
         Altro.solve!(solver)
     end
-
     # post-process
-    acontrols_raw = TO.controls(solver)
-    acontrols_arr = permutedims(reduce(hcat, map(Array, acontrols_raw)), [2, 1])
-    astates_raw = TO.states(solver)
-    astates_arr = permutedims(reduce(hcat, map(Array, astates_raw)), [2, 1])
+    # acontrols_raw = TO.controls(solver)
+    # acontrols_arr = permutedims(reduce(hcat, map(Array, acontrols_raw)), [2, 1])
+    # astates_raw = TO.states(solver)
+    # astates_arr = permutedims(reduce(hcat, map(Array, astates_raw)), [2, 1])
     Q_raw = Array(Q)
     Q_arr = [Q_raw[i, i] for i in 1:size(Q_raw)[1]]
     Qf_raw = Array(Qf)
@@ -305,11 +303,11 @@ function run_traj(;fock_state=0, evolution_time=200., dt_inv=1., verbose=true,
     iterations_ = Altro.iterations(solver)
 
     result = Dict(
-        "acontrols" => acontrols_arr,
+        # "acontrols" => acontrols_arr,
         "controls_idx" => cidx_arr,
         "d2controls_dt2_idx" => d2cidx_arr,
         "evolution_time" => evolution_time,
-        "astates" => astates_arr,
+        # "astates" => astates_arr,
         "Q" => Q_arr,
         "Qf" => Qf_arr,
         "R" => R_arr,
@@ -317,16 +315,14 @@ function run_traj(;fock_state=0, evolution_time=200., dt_inv=1., verbose=true,
         "cmax_info" => cmax_info,
         "dt" => dt,
         "derivative_order" => derivative_order,
-        "sqrtbp" => Integer(sqrtbp),
         "max_penalty" => max_penalty,
-        "constraint_tol" => constraint_tol,
-        "al_tol" => al_tol,
+        "ilqr_ctol" => ilqr_ctol,
+        "ilqr_gtol" => ilqr_gtol,
         "save_type" => Integer(jl),
         "iterations" => iterations_,
         "max_iterations" => max_iterations,
         "pn_steps" => pn_steps,
-        "max_cost_value" => max_cost_value,
-        "static_bp" => Integer(static_bp),
+        "max_cost" => max_cost,
     )
     
     # save
