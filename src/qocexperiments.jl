@@ -317,10 +317,10 @@ function exp!(mtmp::Vector{TM}, mtmp_dense::Vector{TMd}, ipiv_tmp::TVi, A::TM) w
     U = mtmp[10]
     V = mtmp[11]
     W = mtmp[12]
-    W .= W2
-    mul!(W, A6, W1, 1., 1.)
-    V .= Z2
-    mul!(V, A6, Z1, 1., 1.)
+    mul!(W, A6, W1)
+    W .+= W2
+    mul!(V, A6, Z1)
+    V .+= Z2
     mul!(U, A_, W)
     # U - mtmp10
     # V - mtmp11
@@ -328,10 +328,10 @@ function exp!(mtmp::Vector{TM}, mtmp_dense::Vector{TMd}, ipiv_tmp::TVi, A::TM) w
     # compute R_unscaled, VmU_LU
     VmU = mtmp_dense[1]
     VpU = mtmp_dense[2]
-    VpU .= V
-    VmU .= V
-    VpU .+= U
-    VmU .-= U
+    for i in eachindex(A)
+        VmU[i] = V[i] - U[i]
+        VpU[i] = V[i] + U[i]
+    end
     (VmU_LU, VmU_ipiv) = getrf!(VmU)
     ipiv_tmp .= VmU_ipiv
     mtmp[13] .= getrs!('N', VmU_LU, VmU_ipiv, VpU)
@@ -423,25 +423,28 @@ function exp_frechet!(mtmp::Vector{TM}, mtmp_dense::Vector{TMd},
     # Lz1 - mtmp20
     # Lz2 - mtmp21
     # Compute Lw, Lu, Lv
-    Lw = mtmp[22] .= Lw2
-    mul!(Lw, A6, Lw1, 1., 1.)
+    Lw = mul!(mtmp[22], A6, Lw1)
     mul!(Lw, M6, W1, 1., 1.)
+    Lw .+= Lw2
     Lu = mul!(mtmp[23], A_, Lw)
     mul!(Lu, E_, W, 1., 1.)
-    Lv = mtmp[24] .= Lz2
-    mul!(Lv, A6, Lz1)
+    Lv = mul!(mtmp[24], A6, Lz1)
     mul!(Lv, M6, Z1, 1., 1.)
+    Lv .+= Lz2
     # Lw - mtmp 22
     # Lu - mtmp 23
     # Lv - mtmp 24
     # compute L
-    mtmp[26] .= Lu
-    mtmp[26] .-= Lv
+    for i in eachindex(A)
+        mtmp[26][i] = Lu[i] - Lv[i]
+    end
     L = mul!(mtmp[25], mtmp[26], R)
-    L .+= Lu
-    L .+= Lv
+    for i in eachindex(A)
+        L[i] += Lu[i] + Lv[i]
+    end
     mtmp_dense[2] .= L
     L .= getrs!('N', VmU_LU, VmU_ipiv, mtmp_dense[2])
+    # L_unscaled - mtmp25 - mtmp_dense2
     # don't overwrite mtmp[13] so that multiple exp_frechet!
     # calls can reuse mtmp[13] for R_unscaled
     R = mtmp[15] .= mtmp[13]
@@ -449,12 +452,10 @@ function exp_frechet!(mtmp::Vector{TM}, mtmp_dense::Vector{TMd},
     if s > 0
         for t = 1:si
             mul!(mtmp[26], R, L)
-            mul!(mtmp[27], L, R)
-            mul!(mtmp[28], R, R)
-            for i in eachindex(A)
-                L[i] = mtmp[26][i] + mtmp[27][i]
-                R[i] = mtmp[28][i]
-            end
+            mul!(mtmp[26], L, R, 1., 1.)
+            L .= mtmp[26]
+            mul!(mtmp[26], R, R)
+            R .= mtmp[26]
         end
     end
     # L - mtmp25
