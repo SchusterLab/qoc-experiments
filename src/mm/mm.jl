@@ -30,12 +30,12 @@ const TRANSMON_FREQ = 2 * pi * 4.99
 const CHI_E_2 = 2 * pi * -1.33e-3
 const CAVITY_FREQ_2 = 2 * pi * 5.96
 const KAPPA_2 = 2 * pi * 5.23e-6
-const MAX_AMP_NORM_TRANSMON = 2 * pi * 4e-3
+const MAX_AMP_NORM_TRANSMON = 2 * pi * 4e-2
 const MAX_AMP_NORM_CAVITY = 2 * pi * 4e-4
 
 # Define the system.
 const TRANSMON_STATE_COUNT = 2
-const CAVITY_STATE_COUNT = 2
+const CAVITY_STATE_COUNT = 5
 const HDIM = TRANSMON_STATE_COUNT * CAVITY_STATE_COUNT
 const HDIM_ISO = 2 * HDIM
 
