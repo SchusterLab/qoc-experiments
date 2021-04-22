@@ -38,7 +38,7 @@ end
 function Model(M_, Md_, V_, Hs, time_optimal)
     # problem size
     control_count = 1
-    state_count = HDIM_ISO
+    state_count = HDIM
     n = state_count * HDIM_ISO + 2 * control_count
     m = control_count
     # state indices
@@ -69,7 +69,7 @@ abstract type EXP <: RD.Explicit end
 function RD.discrete_dynamics(::Type{EXP}, model::Model,
                               astate::AbstractVector,
                               acontrol::AbstractVector, time::Real, dt_::Real)
-    dt = !model.time_optimal ? dt : acontrol[model.dt_idx[1]]
+    dt = !model.time_optimal ? dt_ : acontrol[model.dt_idx[1]]
     # get hamiltonian and unitary
     H = dt * (
         model.Hs[1]
@@ -78,18 +78,20 @@ function RD.discrete_dynamics(::Type{EXP}, model::Model,
     U = exp(H)
     # propagate state
     state1 = U * astate[model.state1_idx]
+    state2 = U * astate[model.state2_idx]
     # propagate controls
     controls = astate[model.dcontrols_idx] .* dt + astate[model.controls_idx]
     # propagate dcontrols
     dcontrols = acontrol[model.d2controls_idx] .* dt + astate[model.dcontrols_idx]
     # construct astate
-    astate_ = [state1; controls; dcontrols]
+    astate_ = [state1; state2; controls; dcontrols]
     return astate_
 end
 
 function run_traj(;evolution_time=20., dt=DT_PREF, verbose=true,
                   time_optimal=false, qs=[1e0, 1e-1, 1e-1, 1e-1, 1e-1], smoke_test=false,
                   save=true, benchmark=false)
+    # build model
     Hs = [M(H) for H in (NEGI_H0_ISO, NEGI_H1_ISO)]
     model = Model(M, Md, V, Hs, time_optimal)
     n, m = size(model)
