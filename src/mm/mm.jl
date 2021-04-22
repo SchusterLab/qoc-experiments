@@ -26,16 +26,18 @@ const DT_PREF = 1e-2
 const DT_PREF_INV = 100
 
 # Define experimental constants.
-const TRANSMON_FREQ = 2 * pi * 4.99
-const CHI_E_2 = 2 * pi * -1.33e-3
-const CAVITY_FREQ_2 = 2 * pi * 5.96
-const KAPPA_2 = 2 * pi * 5.23e-6
-const MAX_AMP_NORM_TRANSMON = 2 * pi * 4e-3
-const MAX_AMP_NORM_CAVITY = 2 * pi * 4e-4
+const TRANSMON_FREQ = 2π * 4.99
+const CHI_E_2 = 2π * -1.33e-3
+const CAVITY_FREQ_2 = 2π * 5.96
+const KAPPA_2 = 2π * 5.23e-6
+# const MAX_AMP_NORM_TRANSMON = 2π * 4e-3
+# const MAX_AMP_NORM_CAVITY = 2π * 4e-4
+const MAX_AMP_NORM_TRANSMON = 2π * 4e-2
+const MAX_AMP_NORM_CAVITY = 2π * 4e-3
 
 # Define the system.
 const TRANSMON_STATE_COUNT = 2
-const CAVITY_STATE_COUNT = 3
+const CAVITY_STATE_COUNT = 10
 const HDIM = TRANSMON_STATE_COUNT * CAVITY_STATE_COUNT
 const HDIM_ISO = 2 * HDIM
 
@@ -54,7 +56,7 @@ const TRANSMON_ID = I(TRANSMON_STATE_COUNT)
 # To get the last element of the array you do `arr[end]`
 # or `arr[end - 1]` which is like `arr[-1]` or `arr[-2]` in Python.
 const TRANSMON_G = [1; zeros(TRANSMON_STATE_COUNT - 1)]
-const TRANSMON_E = [0; 1; zeros(TRANSMON_STATE_COUNT - 2)]
+const TRANSMON_E = [zeros(1); 1; zeros(TRANSMON_STATE_COUNT - 2)]
 
 const CAVITY_ANNIHILATE = diagm(1 => map(sqrt, 1:CAVITY_STATE_COUNT-1))
 const CAVITY_CREATE = CAVITY_ANNIHILATE'
@@ -62,14 +64,13 @@ const CAVITY_NUMBER = CAVITY_CREATE * CAVITY_ANNIHILATE
 const CAVITY_ID = I(CAVITY_STATE_COUNT)
 const CAVITY_QUAD = CAVITY_NUMBER * (CAVITY_NUMBER - CAVITY_ID)
 const CAVITY_ZERO = [1; zeros(CAVITY_STATE_COUNT - 1)]
-const CAVITY_ONE = [0; 1; zeros(CAVITY_STATE_COUNT - 2)]
+const CAVITY_ONE = [zeros(1); 1; zeros(CAVITY_STATE_COUNT - 2)]
+const CAVITY_TWO = [zeros(2); 1; zeros(CAVITY_STATE_COUNT - 3)]
+# const CAVITY_THREE = [zeros(3); 1; zeros(CAVITY_STATE_COUNT - 4)]
+# const CAVITY_FOUR = [zeros(4); 1; zeros(CAVITY_STATE_COUNT - 5)]
+
 
 # Static hamiltonian.
-# You will see calls to `SMatrix`, `SVector`, `@SVector`, etc.
-# These cast the arrays to StaticArrays, as in the name of the package imported above.
-# Static arrays have performance advantages compared to fixed arrays, namely
-# their size is known by the compiler ahead of time, hence the specificiation
-# that `H0` is a matrix of size HDIM_ISO x HDIM_ISO.
 # We define all of our hamiltonians as -1im * H so that when we write
 # the schroedinger equation dynamics we don't have to do extra
 # multiplication.
@@ -94,7 +95,7 @@ const NEGI_DH0_ISO = get_mat_iso(
         kron(CAVITY_ID, TRANSMON_E * TRANSMON_E')
         # + kron(CAVITY_NUMBER, TRANSMON_E * TRANSMON_E')
         # + kron(CAVITY_NUMBER, TRANSMON_ID)
-        # + kron(CAVITY_QUAD, TRANSMON_ID)
+        # + (kron(CAVITY_QUAD, TRANSMON_ID) ./ 2)
     )
 )
 
