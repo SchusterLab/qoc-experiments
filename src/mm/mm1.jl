@@ -9,11 +9,13 @@ using Altro
 using CUDA
 using ForwardDiff
 using HDF5
+using IterTools
 using LinearAlgebra
 using RobotDynamics
 using SparseArrays
 using StaticArrays
 using TrajectoryOptimization
+const FD = ForwardDiff
 const RD = RobotDynamics
 const TO = TrajectoryOptimization
 
@@ -101,7 +103,7 @@ function RD.discrete_dynamics(::Type{EXP}, model::Model,
     state1 = U * astate[model.state1_idx]
     # propagate dstate
     if model.derivative_count == 1
-        dstate1 = U * (astate[model.dstate1_idx] + dt * model.Hs[6] * astate[model.state1_idx])
+        dstate1 = U * ((astate[model.dstate1_idx] ./ dt) + model.Hs[6] * astate[model.state1_idx])
     end
     # propagate controls
     controls = astate[model.dcontrols_idx] .* dt + astate[model.controls_idx]
@@ -139,10 +141,8 @@ function RD.discrete_dynamics!(astate_::AbstractVector, ::Type{EXP}, model::Mode
     astate_[model.state1_idx] .= model.vtmp[1]
     # propagate dstate
     if model.derivative_count == 1
-        mul!(model.vtmp[1], model.Hs[6], state1)
-        for i = 1:HDIM_ISO
-            model.vtmp[1][i] = dt * model.vtmp[1][i] + astate[model.dstate1_idx[i]]
-        end
+        model.vtmp[1] .= astate[model.dstate1_idx]
+        mul!(model.vtmp[1], model.Hs[6], state1, 1., dt^(-1))
         mul!(model.vtmp[2], U, model.vtmp[1])
         astate_[model.dstate1_idx] .= model.vtmp[2]
     end
@@ -185,7 +185,6 @@ function RD.discrete_jacobian!(D::AbstractMatrix, A::AbstractMatrix, B::Abstract
     A[model.state1_idx, model.state1_idx] = U
     if model.derivative_count == 1
         mul!(model.mtmp[34], U, model.Hs[6])
-        lmul!(dt, model.mtmp[34])
         A[model.dstate1_idx, model.state1_idx] .= model.mtmp[34]
     end
     # c1
@@ -195,8 +194,8 @@ function RD.discrete_jacobian!(D::AbstractMatrix, A::AbstractMatrix, B::Abstract
     mul!(model.vtmp[3], dU_dc1, state1k)
     A[model.state1_idx, model.controls_idx[1]] .= model.vtmp[3]
     if model.derivative_count == 1
-        mul!(model.vtmp[4], model.Hs[6], state1k)
-        lmul!(dt, model.vtmp[4])
+        model.vtmp[4] .= astate[model.dstate1_idx]
+        mul!(model.vtmp[4], model.Hs[6], state1k, 1., dt^(-1))
         mul!(model.vtmp[3], dU_dc1, model.vtmp[4])
         A[model.dstate1_idx, model.controls_idx[1]] .= model.vtmp[3]
     end
@@ -232,7 +231,8 @@ function RD.discrete_jacobian!(D::AbstractMatrix, A::AbstractMatrix, B::Abstract
     end
     # ds1
     if model.derivative_count == 1
-        A[model.dstate1_idx, model.dstate1_idx] = U
+        A[model.dstate1_idx, model.dstate1_idx] .= U
+        A[model.dstate1_idx, model.dstate1_idx] .*= dt^(-1)
     end
     for i = 1:model.m
         # control modifications
@@ -249,7 +249,8 @@ function run_traj(;fock_state=0, evolution_time=2000., dt=1., verbose=true,
                   derivative_count=0, qs=[1e0, 1e-1, 1e-1, 1e-1, 1e-1], smoke_test=false,
                   pn_steps=2, max_penalty=1e11, save=true, max_iterations=Int64(2e5),
                   max_cost=1e8, benchmark=false, ilqr_ctol=1e-2, ilqr_gtol=1e-4,
-                  ilqr_max_iterations=300, penalty_scaling=10.)
+                  ilqr_max_iterations=300, penalty_scaling=10., max_state_value=1e10,
+                  max_control_value=1e10)
     Hs = [M(H) for H in (NEGI_H0ROT_ISO, NEGI_H1R_ISO, NEGI_H1I_ISO, NEGI_H2R_ISO, NEGI_H2I_ISO,
                          NEGI_DH0_ISO)]
     model = Model(M, Md, V, Hs, derivative_count)
@@ -268,34 +269,47 @@ function run_traj(;fock_state=0, evolution_time=2000., dt=1., verbose=true,
     xf[model.state1_idx] = get_vec_iso(kron(cavity_state, TRANSMON_G))
     xf = V(xf)
 
-    # control amplitude constraint at boundary
+    # bound constraints
     x_max = fill(Inf, n_)
+    x_max_boundary = fill(Inf, n_)
+    x_min = fill(-Inf, n_)
+    x_min_boundary = fill(-Inf, n_)
+    u_max = fill(Inf, m_)
+    u_max_boundary = fill(Inf, m_)
+    u_min = fill(-Inf, m_)
+    u_min_boundary = fill(-Inf, m_)
+    # constrain the control amplitudes
     x_max[model.controls_idx[1:2]] .= MAX_AMP_NORM_TRANSMON
     x_max[model.controls_idx[3:4]] .= MAX_AMP_NORM_CAVITY
-    x_max = V(x_max)
-    u_max = V(fill(Inf, m_))
-    x_min = fill(-Inf, n_)
     x_min[model.controls_idx[1:2]] .= -MAX_AMP_NORM_TRANSMON
     x_min[model.controls_idx[3:4]] .= -MAX_AMP_NORM_CAVITY
-    x_min = V(x_min)
-    u_min = V(fill(-Inf, m_))
-    # control amplitude constraint at boundary
-    x_max_boundary = fill(Inf, n_)
+    # control amplitudes go to zero at boundary
     x_max_boundary[model.controls_idx] .= 0
-    x_max_boundary = V(x_max_boundary)
-    u_max_boundary = V(fill(Inf, m_))
-    x_min_boundary = fill(-Inf, n_)
     x_min_boundary[model.controls_idx] .= 0
+    # disallow population of the highest cavity level
+    cavity_nopop_idxs = reduce(vcat, [cavity_idxs(i) for i = 3:CAVITY_STATE_COUNT-1])
+    # nopop_tol = 1e-1
+    # x_max[cavity_nopop_idxs] .= nopop_tol
+    # x_max_boundary[cavity_nopop_idxs] .= nopop_tol
+    # x_min[cavity_nopop_idxs] .= 0
+    # x_min_boundary[cavity_nopop_idxs] .= 0
+    # vectorize
+    x_max = V(x_max)
+    x_max_boundary = V(x_max_boundary)
+    x_min = V(x_min)
     x_min_boundary = V(x_min_boundary)
-    u_min_boundary = V(fill(-Inf, m_))
-
+    u_max = V(u_max)
+    u_max_boundary = V(u_max_boundary)
+    u_min = V(u_min)
+    u_min_boundary = V(u_min_boundary)
+    
     # initial trajectory
     N_ = Int(floor(evolution_time / dt)) + 1
     X0 = [V(zeros(n_)) for k = 1:N_]
     X0[1] .= x0
     U0 = [V([
-        fill(1e-6, 2);
-        fill(1e-6, 2);
+        fill(1e-10, 2);
+        fill(1e-10, 2);
     ]) for k = 1:N_-1]
     ts = V(zeros(N_))
     ts[1] = t0
@@ -307,6 +321,7 @@ function run_traj(;fock_state=0, evolution_time=2000., dt=1., verbose=true,
     # cost function
     Q = V(zeros(n_))
     Q[model.state1_idx] .= qs[1]
+    Q[cavity_nopop_idxs] .+= qs[6]
     Q[model.controls_idx] .= qs[2]
     Q[model.dcontrols_idx] .= qs[3]
     if model.derivative_count == 1
@@ -315,7 +330,7 @@ function run_traj(;fock_state=0, evolution_time=2000., dt=1., verbose=true,
     Q = Diagonal(Q)
     Qf = Q * N_
     R = V(zeros(m_))
-    R[model.d2controls_idx] .= qs[4]
+    R[model.d2controls_idx] .= qs[5]
     R = Diagonal(R)
     objective = LQRObjective(Q, Qf, R, xf, n_, m_, N_, M, V)
 
@@ -345,7 +360,8 @@ function run_traj(;fock_state=0, evolution_time=2000., dt=1., verbose=true,
         al_max_iterations=al_max_iterations,
         iterations=max_iterations,
         max_cost_value=max_cost, ilqr_ctol=ilqr_ctol, ilqr_gtol=ilqr_gtol,
-        penalty_scaling=penalty_scaling
+        penalty_scaling=penalty_scaling, max_state_value=max_state_value,
+        max_control_value=max_control_value
     )
     # solve
     solver = ALTROSolver(prob, opts)
@@ -355,6 +371,7 @@ function run_traj(;fock_state=0, evolution_time=2000., dt=1., verbose=true,
         benchmark_result = nothing
         Altro.solve!(solver)
     end
+    println(solver.stats.status)
     # post-process
     acontrols_raw = Altro.controls(solver)
     acontrols_arr = permutedims(reduce(hcat, map(Array, acontrols_raw)), [2, 1])
@@ -366,6 +383,7 @@ function run_traj(;fock_state=0, evolution_time=2000., dt=1., verbose=true,
     Qf_arr = [Qf_raw[i, i] for i in 1:size(Qf_raw)[1]]
     R_raw = Array(R)
     R_arr = [R_raw[i, i] for i in 1:size(R_raw)[1]]
+    state1_idx_arr = Array(model.state1_idx)
     cidx_arr = Array(model.controls_idx)
     d2cidx_arr = Array(model.d2controls_idx)
     max_v, max_v_info = Altro.max_violation_info(solver)
@@ -377,6 +395,7 @@ function run_traj(;fock_state=0, evolution_time=2000., dt=1., verbose=true,
         "d2controls_dt2_idx" => d2cidx_arr,
         "evolution_time" => evolution_time,
         "astates" => astates_arr,
+        "state1_idx" => state1_idx_arr,
         "Q" => Q_arr,
         "Qf" => Qf_arr,
         "R" => R_arr,
@@ -384,7 +403,6 @@ function run_traj(;fock_state=0, evolution_time=2000., dt=1., verbose=true,
         "max_v_info" => max_v_info,
         "dt" => dt,
         "ts" => ts,
-        "derivative_count" => derivative_count,
         "max_penalty" => max_penalty,
         "ilqr_ctol" => ilqr_ctol,
         "ilqr_gtol" => ilqr_gtol,
@@ -393,6 +411,11 @@ function run_traj(;fock_state=0, evolution_time=2000., dt=1., verbose=true,
         "max_iterations" => max_iterations,
         "pn_steps" => pn_steps,
         "max_cost" => max_cost,
+        "derivative_count" => derivative_count,
+        "fock_state" => fock_state,
+        "transmon_state_count" => TRANSMON_STATE_COUNT,
+        "cavity_state_count" => CAVITY_STATE_COUNT,
+        "hdim_iso" => HDIM_ISO
     )
     
     # save
@@ -410,4 +433,195 @@ function run_traj(;fock_state=0, evolution_time=2000., dt=1., verbose=true,
     result = benchmark ? benchmark_result : result
 
     return result
+end
+
+@inline cavity_idxs(level::Int) = (
+    TRANSMON_STATE_COUNT * level
+    .+ [Array(1:TRANSMON_STATE_COUNT);
+        Int(HDIM_ISO/2) .+ Array(1:TRANSMON_STATE_COUNT)]
+)
+
+function test_dynamics()
+    # problem
+    derivative_count = 1
+    Hs = [M(H) for H in (NEGI_H0ROT_ISO, NEGI_H1R_ISO, NEGI_H1I_ISO, NEGI_H2R_ISO, NEGI_H2I_ISO,
+                         NEGI_DH0_ISO)]
+    model = Model(M, Md, V, Hs, derivative_count)
+    n, m = size(model)
+    # state + control
+    ix = 1:n
+    iu = (1:m) .+ n
+    x0 = ones(n)
+    u0 = fill(1e-4, 4)
+    z0 = [x0; u0]
+    dt = 1.
+    t = 1.
+    # tmp
+    AB = zeros(n, n + m)
+    ABp = zeros(n, n + m)
+    Ap = zeros(n, n)
+    Bp = zeros(n, m)
+    # execute autodiff
+    f(z) = RD.discrete_dynamics(EXP, model, z[ix], z[iu], t, dt)
+    FD.jacobian!(AB, f, z0)
+    A = AB[ix, ix]
+    B = AB[ix, iu]
+    # execute hand
+    RD.discrete_jacobian!(ABp, Ap, Bp, EXP, model, x0, u0, t, dt, ix, iu)
+    # check
+    @assert A ≈ Ap
+    @assert B ≈ Bp
+end
+
+
+"""
+use the result of run_traj to generate data for plotting
+"""
+function gen_dparam(save_file_path; trial_count=1000, sigma_max=1e-4, save=true)
+    # grab relevant information
+    (evolution_time, dt, derivative_count, U_, fock_state
+     ) = h5open(save_file_path, "r") do save_file
+        evolution_time = read(save_file, "evolution_time")
+        dt = read(save_file, "dt")
+        derivative_count = read(save_file, "derivative_count")
+        U_ = read(save_file, "acontrols")
+        fock_state = read(save_file, "fock_state")
+        return (evolution_time, dt, derivative_count, U_, fock_state)
+    end
+    # set up problem
+    n = size(NEGI_H0ROT_ISO, 1)
+    mh1 = zeros(n, n) .= NEGI_H0ROT_ISO
+    Hs = [M(H) for H in (mh1, NEGI_H1R_ISO, NEGI_H1I_ISO, NEGI_H2R_ISO, NEGI_H2I_ISO,
+                         NEGI_DH0_ISO)]
+    model = Model(M, Md, V, Hs, derivative_count)
+    n, m = size(model)
+    N = Int(floor(evolution_time / dt)) + 1
+    U = [U_[k, :] for k = 1:N-1]
+    X = [zeros(n) for i = 1:N]
+    ts = [dt * (k - 1) for k = 1:N]
+    # initial state
+    x0 = zeros(n)
+    x0[model.state1_idx] = IS1_ISO
+    x0 = V(x0)
+    X[1] = x0
+    # target state
+    xf = zeros(n)
+    cavity_state = zeros(CAVITY_STATE_COUNT)
+    cavity_state[fock_state + 1] = 1
+    ψT = kron(cavity_state, TRANSMON_G)
+    xf[model.state1_idx] = get_vec_iso(ψT)
+    xf = V(xf)
+    # generate parameters
+    fq_dev_max = TRANSMON_FREQ * sigma_max
+    devs = Array(range(-fq_dev_max, stop=fq_dev_max, length=2 * trial_count + 1))
+    fracs = map(d -> d / TRANSMON_FREQ, devs)
+    negi_h0rot_iso(dev) = get_mat_iso(
+        - 1im * (
+            dev * kron(CAVITY_ID, TRANSMON_E * TRANSMON_E')
+            + CHI_E_2 * kron(CAVITY_NUMBER, TRANSMON_E * TRANSMON_E')
+            + (KAPPA_2 / 2) * kron(CAVITY_QUAD, TRANSMON_ID)
+        )
+    )
+    negi_h0s = map(negi_h0rot_iso, devs)
+    gate_errors = zeros(2 * trial_count + 1)
+    # collect gate errors
+    for (i, negi_h0) in enumerate(negi_h0s)
+        mh1 .= negi_h0
+        # rollout
+        for k = 1:N-1
+            RD.discrete_dynamics!(X[k + 1], EXP, model, X[k], U[k], ts[k], dt)
+        end
+        ψN = get_vec_uniso(X[N][model.state1_idx])
+        gate_error = 1 - abs(ψT'ψN)^2
+        gate_errors[i] = gate_error
+        # println("dev: $(devs[i]), ge: $(gate_errors[i])\n$(model.Hs[1])")
+    end
+    # save
+    data_file_path = generate_file_path("h5", EXPERIMENT_NAME, SAVE_PATH)
+    if save
+        h5open(data_file_path, "w") do data_file
+            write(data_file, "save_file_path", save_file_path)
+            write(data_file, "gate_errors", gate_errors)
+            write(data_file, "devs", devs)
+            write(data_file, "fracs", fracs)
+        end
+    end
+    
+    return data_file_path
+end
+
+
+function plot_dparam(data_file_paths; labels=nothing, legend=nothing)
+    # grab
+    gate_errors = []
+    fracs = []
+    for data_file_path in data_file_paths
+        (gate_errors_, fracs_) = h5open(data_file_path, "r") do data_file
+            gate_errors_ = read(data_file, "gate_errors")
+            fracs_ = read(data_file, "fracs")
+            return (gate_errors_, fracs_)
+        end
+        push!(gate_errors, gate_errors_)
+        push!(fracs, fracs_)
+    end
+    # initial plot
+    ytick_vals = Array(-9:1:-1)
+    ytick_labels = ["1e$(pow)" for pow in ytick_vals]
+    yticks = (ytick_vals, ytick_labels)
+    fig = Plots.plot(dpi=DPI, title=nothing, legend=legend, yticks=yticks)
+    Plots.xlabel!("|δω_q/ω_q| (1e-4)")
+    Plots.ylabel!("Gate Error")
+    for i = 1:length(gate_errors)
+        gate_errors_ = gate_errors[i]
+        fracs_ = fracs[i]
+        trial_count = Int((length(fracs_) - 1)/2)
+        gate_errors__ = zeros(trial_count + 1)
+        # average
+        mid = trial_count + 1
+        fracs__ = fracs_[mid:end] .* 1e4
+        gate_errors__[1] = gate_errors_[mid]
+        for j = 1:trial_count
+            gate_errors__[j + 1] = (gate_errors_[mid - j] + gate_errors_[mid + j]) / 2
+        end
+        log_ge = map(x -> log10(x), gate_errors__)
+        label = isnothing(labels) ? nothing : labels[i]
+        Plots.plot!(fracs__, log_ge, label=label)
+    end
+    plot_file_path = generate_file_path("png", EXPERIMENT_NAME, SAVE_PATH)
+    Plots.savefig(fig, plot_file_path)
+    return plot_file_path
+end
+
+function plot_population(save_file_path; title="", xlabel="Time (ns)", ylabel="Population")
+    # grab
+    save_file = read_save(save_file_path)
+    transmon_state_count = save_file["transmon_state_count"]
+    cavity_state_count = save_file["cavity_state_count"]
+    hdim_iso = save_file["hdim_iso"]
+    ts = save_file["ts"]
+    astates = save_file["astates"]
+    N = size(astates, 1)
+    d = Int(hdim_iso/2)
+    state1_idx = Array(1:hdim_iso)
+    # make labels
+    transmon_labels = ["g", "e", "f", "h"][1:transmon_state_count]
+    cavity_labels = ["$(i)" for i = 0:(cavity_state_count - 1)]
+    labels = []
+    for p in product(transmon_labels, cavity_labels)
+        push!(labels, p[2] * p[1])
+    end
+    # plot
+    fig = Plots.plot(dpi=DPI, title=title, xlabel=xlabel, ylabel=ylabel)
+    plot_file_path = generate_file_path("png", EXPERIMENT_NAME, SAVE_PATH)
+    pops = zeros(N, d)
+    for k = 1:N
+        ψ = get_vec_uniso(astates[k, state1_idx])
+        pops[k, :] = map(x -> abs(x)^2, ψ)
+    end
+    for i = 1:d
+        label = labels[i]
+        Plots.plot!(ts, pops[:, i], label=label)
+    end
+    Plots.savefig(fig, plot_file_path)
+    return plot_file_path
 end
