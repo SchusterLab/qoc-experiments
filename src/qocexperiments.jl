@@ -201,6 +201,8 @@ end
 
 ### MATRIX EXPONENTIAL ###
 
+# TODO: Replace index addition with 5-argument-mul!
+
 function getrf!(A::AbstractMatrix)
     (A_LU, A_ipiv, info) = LAPACK.getrf!(A)
     return A_LU, A_ipiv
@@ -316,11 +318,9 @@ function exp!(mtmp::Vector{TM}, mtmp_dense::Vector{TMd}, ipiv_tmp::TVi, A::TM) w
     V = mtmp[11]
     W = mtmp[12]
     mul!(W, A6, W1)
+    W .+= W2
     mul!(V, A6, Z1)
-    for i in eachindex(A)
-        W[i] += W2[i]
-        V[i] += Z2[i]
-    end
+    V .+= Z2
     mul!(U, A_, W)
     # U - mtmp10
     # V - mtmp11
@@ -329,8 +329,8 @@ function exp!(mtmp::Vector{TM}, mtmp_dense::Vector{TMd}, ipiv_tmp::TVi, A::TM) w
     VmU = mtmp_dense[1]
     VpU = mtmp_dense[2]
     for i in eachindex(A)
-        VpU[i] = V[i] + U[i]
         VmU[i] = V[i] - U[i]
+        VpU[i] = V[i] + U[i]
     end
     (VmU_LU, VmU_ipiv) = getrf!(VmU)
     ipiv_tmp .= VmU_ipiv
@@ -399,17 +399,11 @@ function exp_frechet!(mtmp::Vector{TM}, mtmp_dense::Vector{TMd},
     VmU_ipiv = ipiv_tmp
     # compute M
     M2 = mul!(mtmp[15], A_, E_)
-    mul!(mtmp[16], E_, A_)
-    for i in eachindex(A)
-        M2[i] += mtmp[16][i]
-    end
+    mul!(M2, E_, A_, 1., 1.)
     M4 = mul!(mtmp[16], M2, A2)
-    mul!(mtmp[17], A2, M2)
-    for i in eachindex(A)
-        M4[i] += mtmp[17][i]
-    end
+    mul!(M4, A2, M2, 1., 1.)
     M6 = mul!(mtmp[17], A4, M2)
-    mul!(mtmp[18], M4, A2)
+    mul!(M6, M4, A2, 1., 1.)
     # M2 - mtmp15
     # M4 - mtmp16
     # M6 - mtmp17
@@ -419,7 +413,6 @@ function exp_frechet!(mtmp::Vector{TM}, mtmp_dense::Vector{TMd},
     Lz1 = mtmp[20]
     Lz2 = mtmp[21]
     for i in eachindex(A)
-        M6[i] += mtmp[18][i]
         Lw1[i] = b13 * M6[i] + b11 * M4[i] + b9 * M2[i]
         Lw2[i] = b7 * M6[i] + b5 * M4[i] + b3 * M2[i]
         Lz1[i] = b12 * M6[i] + b10 * M4[i] + b8 * M2[i]
@@ -431,18 +424,13 @@ function exp_frechet!(mtmp::Vector{TM}, mtmp_dense::Vector{TMd},
     # Lz2 - mtmp21
     # Compute Lw, Lu, Lv
     Lw = mul!(mtmp[22], A6, Lw1)
-    mul!(mtmp[23], M6, W1)
-    for i in eachindex(A)
-        Lw[i] += mtmp[23][i] + Lw2[i]
-    end
+    mul!(Lw, M6, W1, 1., 1.)
+    Lw .+= Lw2
     Lu = mul!(mtmp[23], A_, Lw)
-    mul!(mtmp[25], E_, W)
+    mul!(Lu, E_, W, 1., 1.)
     Lv = mul!(mtmp[24], A6, Lz1)
-    mul!(mtmp[26], M6, Z1)
-    for i in eachindex(A)
-        Lu[i] += mtmp[25][i]
-        Lv[i] += mtmp[26][i] + Lz2[i]
-    end
+    mul!(Lv, M6, Z1, 1., 1.)
+    Lv .+= Lz2
     # Lw - mtmp 22
     # Lu - mtmp 23
     # Lv - mtmp 24
@@ -456,6 +444,7 @@ function exp_frechet!(mtmp::Vector{TM}, mtmp_dense::Vector{TMd},
     end
     mtmp_dense[2] .= L
     L .= getrs!('N', VmU_LU, VmU_ipiv, mtmp_dense[2])
+    # L_unscaled - mtmp25 - mtmp_dense2
     # don't overwrite mtmp[13] so that multiple exp_frechet!
     # calls can reuse mtmp[13] for R_unscaled
     R = mtmp[15] .= mtmp[13]
@@ -463,12 +452,10 @@ function exp_frechet!(mtmp::Vector{TM}, mtmp_dense::Vector{TMd},
     if s > 0
         for t = 1:si
             mul!(mtmp[26], R, L)
-            mul!(mtmp[27], L, R)
-            mul!(mtmp[28], R, R)
-            for i in eachindex(A)
-                L[i] = mtmp[26][i] + mtmp[27][i]
-                R[i] = mtmp[28][i]
-            end
+            mul!(mtmp[26], L, R, 1., 1.)
+            L .= mtmp[26]
+            mul!(mtmp[26], R, R)
+            R .= mtmp[26]
         end
     end
     # L - mtmp25
