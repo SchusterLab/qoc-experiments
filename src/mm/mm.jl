@@ -65,7 +65,7 @@ const CAVITY_ID = I(CAVITY_STATE_COUNT)
 const CAVITY_QUAD = CAVITY_NUMBER * (CAVITY_NUMBER - CAVITY_ID)
 const CAVITY_ZERO = [1; zeros(CAVITY_STATE_COUNT - 1)]
 const CAVITY_ONE = [zeros(1); 1; zeros(CAVITY_STATE_COUNT - 2)]
-const CAVITY_TWO = [zeros(2); 1; zeros(CAVITY_STATE_COUNT - 3)]
+# const CAVITY_TWO = [zeros(2); 1; zeros(CAVITY_STATE_COUNT - 3)]
 # const CAVITY_THREE = [zeros(3); 1; zeros(CAVITY_STATE_COUNT - 4)]
 # const CAVITY_FOUR = [zeros(4); 1; zeros(CAVITY_STATE_COUNT - 5)]
 
