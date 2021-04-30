@@ -14,7 +14,6 @@ using HDF5
 using LinearAlgebra
 using Plots
 using Printf
-using RobotDynamics
 
 # plotting configuration and constants
 ENV["GKSwstype"] = "nul"
@@ -41,6 +40,13 @@ end
 @enum ArrayType begin
     cpu = 1
     gpu = 2
+end
+
+@enum GateType begin
+    xpiby2 = 1
+    ypiby2 = 2
+    zpiby2 = 3
+    xpi = 4
 end
 
 

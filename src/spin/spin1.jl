@@ -9,10 +9,6 @@ using Altro
 using ForwardDiff
 using HDF5
 using LinearAlgebra
-using RobotDynamics
-using TrajectoryOptimization
-const RD = RobotDynamics
-const TO = TrajectoryOptimization
 
 # paths
 const EXPERIMENT_META = "spin"
@@ -66,9 +62,9 @@ end
 @inline V(vec_) = vec_
 
 # dynamics
-abstract type EXP <: RD.Explicit end
+abstract type EXP <: Explicit end
 
-function RD.discrete_dynamics(::Type{EXP}, model::Model,
+function Altro.discrete_dynamics(::Type{EXP}, model::Model,
                               astate::AbstractVector,
                               acontrol::AbstractVector, time::Real, dt_::Real)
     dt = !model.time_optimal ? dt_ : acontrol[model.dt_idx[1]]^2
@@ -160,7 +156,7 @@ function run_traj(;evolution_time=20., dt=DT_PREF, verbose=true,
     ts[1] = t0
     for k = 1:N-1
         ts[k + 1] = ts[k] + dt
-        RD.discrete_dynamics!(X0[k + 1], EXP, model, X0[k], U0[k], ts[k], dt)
+        discrete_dynamics!(X0[k + 1], EXP, model, X0[k], U0[k], ts[k], dt)
     end
     
     # cost function
@@ -181,16 +177,16 @@ function run_traj(;evolution_time=20., dt=DT_PREF, verbose=true,
     objective = LQRObjective(Q, Qf, R, xf, n, m, N, M, V)
 
     # create constraints
-    control_amp = TO.BoundConstraint(n, m, x_max, x_min, u_max, u_min, M, V)
-    control_amp_boundary = TO.BoundConstraint(n, m, x_max_boundary, x_min_boundary,
+    control_amp = BoundConstraint(n, m, x_max, x_min, u_max, u_min, M, V)
+    control_amp_boundary = BoundConstraint(n, m, x_max_boundary, x_min_boundary,
                                               u_max_boundary, u_min_boundary, M, V)
-    target_astate_constraint = TO.GoalConstraint(n, m, xf, V([model.state1_idx; model.state2_idx]),
+    target_astate_constraint = GoalConstraint(n, m, xf, V([model.state1_idx; model.state2_idx]),
                                                  M, V)
     # add constraints
-    constraints = TO.ConstraintList(n, m, N, M, V)
-    TO.add_constraint!(constraints, control_amp, V(2:N-2))
-    TO.add_constraint!(constraints, control_amp_boundary, V(N-1:N-1))
-    TO.add_constraint!(constraints, target_astate_constraint, V(N:N))
+    constraints = ConstraintList(n, m, N, M, V)
+    add_constraint!(constraints, control_amp, V(2:N-2))
+    add_constraint!(constraints, control_amp_boundary, V(N-1:N-1))
+    add_constraint!(constraints, target_astate_constraint, V(N:N))
     
     # build problem
     prob = Problem(EXP, model, objective, constraints, X0, U0, ts, N, M, Md, V)
