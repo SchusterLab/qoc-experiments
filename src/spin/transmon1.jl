@@ -15,9 +15,8 @@ using LinearAlgebra
 using StaticArrays
 
 # redefine constants
-# TODO: SAN UPDATE THIS
-const ω_q = 2π * 3.9 #GHz
-const A_MAX = 2π * 0.3 #GHz
+const ω_q = 0. #2π * 5. #GHz
+const A_MAX = 2π * 0.5 #GHz
 const NEGI_H0_ISO = get_mat_iso(-1im * ω_q * SIGMAZ / 2)
 
 # model
@@ -88,13 +87,13 @@ function Altro.discrete_dynamics(::Type{EXP}, model::Model,
 end
 
 # main
-function run_traj(;gate_type=xpi, evolution_time=4., dt=1e-2, verbose=true,
+function run_traj(;gate_type=xpi, evolution_time=5., dt=1e-2, verbose=true,
                   smoke_test=false, save=true, benchmark=false,
                   pn_steps=2, max_penalty=1e11,
                   max_iterations=Int64(2e5),
                   max_cost=1e8, ilqr_ctol=1e-2, ilqr_gtol=1e-4,
                   ilqr_max_iterations=300, penalty_scaling=10., max_state_value=1e10,
-                  max_control_value=1e10, qs=[1e0, 1e0, 1e0, 5e-1])
+                  max_control_value=1e10, qs=[1e0, 1e0, 1e0, 5e-1], pn=true)
     # model configuration
     Hs = [M(H) for H in (NEGI_H0_ISO, NEGI_H1_ISO)]
     model = Model(M, Md, V, Hs)
@@ -110,11 +109,14 @@ function run_traj(;gate_type=xpi, evolution_time=4., dt=1e-2, verbose=true,
 
     # final state
     if gate_type == xpi
-        target_state1 = IS2_ISO
-        target_state2 = IS1_ISO
+        target_state1 = XPI1_ISO
+        target_state2 = XPI2_ISO
     elseif gate_type == xpiby2
         target_state1 = XPIBY21_ISO
         target_state2 = XPIBY22_ISO
+    elseif gate_type == zpiby2
+        target_state1 = ZPIBY21_ISO
+        target_state2 = ZPIBY22_ISO
     end
     xf = zeros(n)
     xf[model.state1_idx] = target_state1
@@ -149,9 +151,9 @@ function run_traj(;gate_type=xpi, evolution_time=4., dt=1e-2, verbose=true,
     # constraints
     constraints = ConstraintList(n, m, N, M, V)
     bc_amid = BoundConstraint(n, m, x_max_amid, x_min_amid, u_max_amid, u_min_amid, M, V)
-    # add_constraint!(constraints, bc_amid, V(2:N-2))
+    add_constraint!(constraints, bc_amid, V(2:N-2))
     bc_abnd = BoundConstraint(n, m, x_max_abnd, x_min_abnd, u_max_abnd, u_min_abnd, M, V)
-    # add_constraint!(constraints, bc_abnd, V(N-1:N-1))
+    add_constraint!(constraints, bc_abnd, V(N-1:N-1))
     goal_idxs = V([model.state1_idx; model.state2_idx])
     gc_f = GoalConstraint(n, m, xf, goal_idxs, M, V)
     add_constraint!(constraints, gc_f, V(N:N))
@@ -160,7 +162,7 @@ function run_traj(;gate_type=xpi, evolution_time=4., dt=1e-2, verbose=true,
     X0 = [V(zeros(n)) for k = 1:N]
     X0[1] .= x0
     U0 = [V([
-        fill(1e-4, model.control_count);
+        fill(1e-6, model.control_count);
     ]) for k = 1:N-1]
     ts = V(zeros(N))
     ts[1] = t0
@@ -192,7 +194,7 @@ function run_traj(;gate_type=xpi, evolution_time=4., dt=1e-2, verbose=true,
     n_steps = smoke_test ? 1 : pn_steps
     opts = SolverOptions(
         penalty_max=max_penalty, verbose_pn=verbose_pn, verbose=verbose_,
-        projected_newton=true, ilqr_max_iterations=ilqr_max_iterations,
+        projected_newton=pn, ilqr_max_iterations=ilqr_max_iterations,
         al_max_iterations=al_max_iterations,
         iterations=max_iterations,
         max_cost_value=max_cost, ilqr_ctol=ilqr_ctol, ilqr_gtol=ilqr_gtol,
