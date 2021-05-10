@@ -1,4 +1,4 @@
-"""DSTATE
+"""
 mm1.jl - first multimode experiment
 """
 
@@ -25,19 +25,22 @@ const EXPERIMENT_NAME = "mm1"
 const SAVE_PATH = abspath(joinpath(WDIR, "out", EXPERIMENT_META, EXPERIMENT_NAME))
 
 # model
-struct Model{TM,TMd,TV,TVi,Tis,Tic} <: AbstractModel
+struct Model{TM,TMd,TV,TVi,Tis,Tic,Tid} <: AbstractModel
     # problem size
     n::Int
     m::Int
+    control_count::Int
     # problem
     Hs::Vector{TM}
     derivative_count::Int
+    time_optimal::Bool
     # indices
     state1_idx::Tis
     controls_idx::Tic
     dcontrols_idx::Tic
     dstate1_idx::Tis
     d2controls_idx::Tic
+    dt_idx::Tid
     # tmp
     mtmp::Vector{TM}
     mtmp_dense::Vector{TMd}
@@ -45,12 +48,12 @@ struct Model{TM,TMd,TV,TVi,Tis,Tic} <: AbstractModel
     ipiv_tmp::TVi
 end
 
-function Model(M_, Md_, V_, Hs, derivative_count)
+function Model(M_, Md_, V_, Hs, derivative_count, time_optimal)
     # problem size
     control_count = 4
     state_count = 1 + derivative_count
     n = state_count * HDIM_ISO + 2 * control_count
-    m = control_count
+    m = time_optimal ? control_count + 1 : control_count
     # state indices
     state1_idx = V(1:HDIM_ISO)
     controls_idx = V(state1_idx[end] + 1:state1_idx[end] + control_count)
@@ -58,10 +61,11 @@ function Model(M_, Md_, V_, Hs, derivative_count)
     dstate1_idx = V(dcontrols_idx[end] + 1:dcontrols_idx[end] + HDIM_ISO)
     # control indices
     d2controls_idx = V(1:control_count)
+    dt_idx = V(d2controls_idx[end] + 1:d2controls_idx[end] + 1)
     # temporary stores
     mtmp = [M_(zeros(HDIM_ISO, HDIM_ISO)) for i = 1:34]
     mtmp_dense = [Md_(zeros(HDIM_ISO, HDIM_ISO)) for i = 1:2]
-    vtmp = [V_(zeros(HDIM_ISO)) for i = 1:4]
+    vtmp = [V_(zeros(HDIM_ISO)) for i = 1:5]
     ipiv_tmp = V_(zeros(Int, HDIM_ISO))
     if ipiv_tmp isa CuVector
         ipiv_tmp = V_(zeros(Int32, HDIM_ISO))
@@ -73,9 +77,12 @@ function Model(M_, Md_, V_, Hs, derivative_count)
     TVi = typeof(ipiv_tmp)
     Tis = typeof(state1_idx)
     Tic = typeof(controls_idx)
-    return Model{TM,TMd,TV,TVi,Tis,Tic}(n, m, Hs, derivative_count, state1_idx, controls_idx,
-                                        dcontrols_idx, dstate1_idx, d2controls_idx,
-                                        mtmp, mtmp_dense, vtmp, ipiv_tmp)
+    Tid = typeof(dt_idx)
+    return Model{TM,TMd,TV,TVi,Tis,Tic,Tid}(
+        n, m, control_count, Hs, derivative_count, time_optimal,
+        state1_idx, controls_idx, dcontrols_idx, dstate1_idx, d2controls_idx,
+        dt_idx, mtmp, mtmp_dense, vtmp, ipiv_tmp
+    )
 end
 
 @inline Base.size(model::Model) = model.n, model.m
@@ -89,7 +96,8 @@ abstract type EXP <: RD.Explicit end
 
 function RD.discrete_dynamics(::Type{EXP}, model::Model,
                               astate::AbstractVector,
-                              acontrol::AbstractVector, time::Real, dt::Real)
+                              acontrol::AbstractVector, time::Real, dt_::Real)
+    dt = !model.time_optimal ? dt_ : acontrol[model.dt_idx[1]]^2
     # get hamiltonian and unitary
     H = dt * (
         model.Hs[1]
@@ -119,7 +127,8 @@ end
 
 function RD.discrete_dynamics!(astate_::AbstractVector, ::Type{EXP}, model::Model,
                                astate::AbstractVector,
-                               acontrol::AbstractVector, time::Real, dt::Real)
+                               acontrol::AbstractVector, time::Real, dt_::Real)
+    dt = !model.time_optimal ? dt_ : acontrol[model.dt_idx[1]]^2
     # get hamiltonian and unitary
     H = model.mtmp[29]
     H1r = model.mtmp[30] .= model.Hs[2]
@@ -159,8 +168,10 @@ end
 
 function RD.discrete_jacobian!(D::AbstractMatrix, A::AbstractMatrix, B::AbstractMatrix,
                                ::Type{EXP}, model::Model, astate::AbstractVector,
-                               acontrol::AbstractVector, time::Real, dt::Real,
+                               acontrol::AbstractVector, time::Real, dt_::Real,
                                ix::AbstractVector, iu::AbstractVector)
+    dt = !model.time_optimal ? dt_ : acontrol[model.dt_idx[1]]^2
+    sqrt_dt = sqrt(dt)
     # get hamiltonian and unitary
     H = model.mtmp[29]
     H1r = model.mtmp[30] .= model.Hs[2]
@@ -184,6 +195,7 @@ function RD.discrete_jacobian!(D::AbstractMatrix, A::AbstractMatrix, B::Abstract
     # s1
     A[model.state1_idx, model.state1_idx] = U
     if model.derivative_count == 1
+        dstate1 = model.vtmp[3] .= astate[model.dstate1_idx]
         mul!(model.mtmp[34], U, model.Hs[6])
         A[model.dstate1_idx, model.state1_idx] .= model.mtmp[34]
     end
@@ -191,69 +203,94 @@ function RD.discrete_jacobian!(D::AbstractMatrix, A::AbstractMatrix, B::Abstract
     H1r .= model.Hs[2]
     lmul!(dt, H1r)
     dU_dc1 = exp_frechet!(model.mtmp, model.mtmp_dense, model.ipiv_tmp, H, H1r; reuse=true)
-    mul!(model.vtmp[3], dU_dc1, state1k)
-    A[model.state1_idx, model.controls_idx[1]] .= model.vtmp[3]
+    mul!(model.vtmp[5], dU_dc1, state1k)
+    A[model.state1_idx, model.controls_idx[1]] .= model.vtmp[5]
     if model.derivative_count == 1
-        model.vtmp[4] .= astate[model.dstate1_idx]
+        model.vtmp[4] .= dstate1
         mul!(model.vtmp[4], model.Hs[6], state1k, 1., dt^(-1))
-        mul!(model.vtmp[3], dU_dc1, model.vtmp[4])
-        A[model.dstate1_idx, model.controls_idx[1]] .= model.vtmp[3]
+        mul!(model.vtmp[5], dU_dc1, model.vtmp[4])
+        A[model.dstate1_idx, model.controls_idx[1]] .= model.vtmp[5]
     end
     # c2
     H1i .= model.Hs[3]
     lmul!(dt, H1i)
     dU_dc2 = exp_frechet!(model.mtmp, model.mtmp_dense, model.ipiv_tmp, H, H1i; reuse=true)
-    mul!(model.vtmp[3], dU_dc2, state1k)
-    A[model.state1_idx, model.controls_idx[2]] .= model.vtmp[3]
+    mul!(model.vtmp[5], dU_dc2, state1k)
+    A[model.state1_idx, model.controls_idx[2]] .= model.vtmp[5]
     if model.derivative_count == 1
-        mul!(model.vtmp[3], dU_dc2, model.vtmp[4])
-        A[model.dstate1_idx, model.controls_idx[2]] .= model.vtmp[3]
+        mul!(model.vtmp[5], dU_dc2, model.vtmp[4])
+        A[model.dstate1_idx, model.controls_idx[2]] .= model.vtmp[5]
     end
     # c3
     H2r .= model.Hs[4]
     lmul!(dt, H2r)
     dU_dc3 = exp_frechet!(model.mtmp, model.mtmp_dense, model.ipiv_tmp, H, H2r; reuse=true)
-    mul!(model.vtmp[3], dU_dc3, state1k)
-    A[model.state1_idx, model.controls_idx[3]] .= model.vtmp[3]
+    mul!(model.vtmp[5], dU_dc3, state1k)
+    A[model.state1_idx, model.controls_idx[3]] .= model.vtmp[5]
     if model.derivative_count == 1
-        mul!(model.vtmp[3], dU_dc3, model.vtmp[4])
-        A[model.dstate1_idx, model.controls_idx[3]] .= model.vtmp[3]
+        mul!(model.vtmp[5], dU_dc3, model.vtmp[4])
+        A[model.dstate1_idx, model.controls_idx[3]] .= model.vtmp[5]
     end
     # c4
     H2i .= model.Hs[5]
     lmul!(dt, H2i)
     dU_dc4 = exp_frechet!(model.mtmp, model.mtmp_dense, model.ipiv_tmp, H, H2i; reuse=true)
-    mul!(model.vtmp[3], dU_dc4, state1k)
-    A[model.state1_idx, model.controls_idx[4]] .= model.vtmp[3]
+    mul!(model.vtmp[5], dU_dc4, state1k)
+    A[model.state1_idx, model.controls_idx[4]] .= model.vtmp[5]
     if model.derivative_count == 1
-        mul!(model.vtmp[3], dU_dc4, model.vtmp[4])
-        A[model.dstate1_idx, model.controls_idx[4]] .= model.vtmp[3]
+        mul!(model.vtmp[5], dU_dc4, model.vtmp[4])
+        A[model.dstate1_idx, model.controls_idx[4]] .= model.vtmp[5]
     end
     # ds1
     if model.derivative_count == 1
         A[model.dstate1_idx, model.dstate1_idx] .= U
         A[model.dstate1_idx, model.dstate1_idx] .*= dt^(-1)
     end
-    for i = 1:model.m
+    # dt
+    if model.time_optimal
+        H_dsdt = model.mtmp[34] .= H
+        lmul!(2 * sqrt_dt * dt^(-1), H_dsdt)
+        dU_dsdt = exp_frechet!(model.mtmp, model.mtmp_dense, model.ipiv_tmp, H, H_dsdt;
+                               reuse=true)
+        mul!(model.vtmp[5], dU_dsdt, state1k)
+        B[model.state1_idx, model.dt_idx] .= model.vtmp[5]
+        if model.derivative_count == 1
+            mul!(model.vtmp[5], dU_dsdt, model.vtmp[4])
+            mul!(model.vtmp[5], U, dstate1, -2 * sqrt_dt^(-3), 1.)
+            B[model.dstate1_idx, model.dt_idx] .= model.vtmp[5]
+        end
+    end
+    for i = 1:model.control_count
         # control modifications
         A[model.controls_idx[i], model.controls_idx[i]] = 1
         A[model.controls_idx[i], model.dcontrols_idx[i]] = dt
+        if model.time_optimal
+            B[model.controls_idx[i], model.dt_idx[1]] = (2 * sqrt_dt *
+                                                         astate[model.dcontrols_idx[i]])
+        end
         # dcontrol modifications
         A[model.dcontrols_idx[i], model.dcontrols_idx[i]] = 1
         B[model.dcontrols_idx[i], model.d2controls_idx[i]] = dt
+        if model.time_optimal
+            B[model.dcontrols_idx[i], model.dt_idx[1]] = (2 * sqrt_dt *
+                                                          acontrol[model.d2controls_idx[i]])
+        end
     end
 end
 
 
 function run_traj(;fock_state=0, evolution_time=2000., dt=1., verbose=true,
-                  derivative_count=0, qs=[1e0, 1e-1, 1e-1, 1e-1, 1e-1], smoke_test=false,
+                  derivative_count=0, time_optimal=false,
+                  qs=[1e0, 1e-1, 1e-1, 1e-1, 1e-1, 1e-1, 1e-1], smoke_test=false,
                   pn_steps=2, max_penalty=1e11, save=true, max_iterations=Int64(2e5),
                   max_cost=1e8, benchmark=false, ilqr_ctol=1e-2, ilqr_gtol=1e-4,
                   ilqr_max_iterations=300, penalty_scaling=10., max_state_value=1e10,
-                  max_control_value=1e10)
+                  max_control_value=1e10, cavity_nopop_levels=9:CAVITY_STATE_COUNT-1,
+                  cavity_nopop_tol=1e-1)
+    # construct model
     Hs = [M(H) for H in (NEGI_H0ROT_ISO, NEGI_H1R_ISO, NEGI_H1I_ISO, NEGI_H2R_ISO, NEGI_H2I_ISO,
                          NEGI_DH0_ISO)]
-    model = Model(M, Md, V, Hs, derivative_count)
+    model = Model(M, Md, V, Hs, derivative_count, time_optimal)
     n_, m_ = size(model)
     t0 = 0.
 
@@ -269,47 +306,14 @@ function run_traj(;fock_state=0, evolution_time=2000., dt=1., verbose=true,
     xf[model.state1_idx] = get_vec_iso(kron(cavity_state, TRANSMON_G))
     xf = V(xf)
 
-    # bound constraints
-    x_max = fill(Inf, n_)
-    x_max_boundary = fill(Inf, n_)
-    x_min = fill(-Inf, n_)
-    x_min_boundary = fill(-Inf, n_)
-    u_max = fill(Inf, m_)
-    u_max_boundary = fill(Inf, m_)
-    u_min = fill(-Inf, m_)
-    u_min_boundary = fill(-Inf, m_)
-    # constrain the control amplitudes
-    x_max[model.controls_idx[1:2]] .= MAX_AMP_NORM_TRANSMON
-    x_max[model.controls_idx[3:4]] .= MAX_AMP_NORM_CAVITY
-    x_min[model.controls_idx[1:2]] .= -MAX_AMP_NORM_TRANSMON
-    x_min[model.controls_idx[3:4]] .= -MAX_AMP_NORM_CAVITY
-    # control amplitudes go to zero at boundary
-    x_max_boundary[model.controls_idx] .= 0
-    x_min_boundary[model.controls_idx] .= 0
-    # disallow population of the highest cavity level
-    cavity_nopop_idxs = reduce(vcat, [cavity_idxs(i) for i = 3:CAVITY_STATE_COUNT-1])
-    # nopop_tol = 1e-1
-    # x_max[cavity_nopop_idxs] .= nopop_tol
-    # x_max_boundary[cavity_nopop_idxs] .= nopop_tol
-    # x_min[cavity_nopop_idxs] .= 0
-    # x_min_boundary[cavity_nopop_idxs] .= 0
-    # vectorize
-    x_max = V(x_max)
-    x_max_boundary = V(x_max_boundary)
-    x_min = V(x_min)
-    x_min_boundary = V(x_min_boundary)
-    u_max = V(u_max)
-    u_max_boundary = V(u_max_boundary)
-    u_min = V(u_min)
-    u_min_boundary = V(u_min_boundary)
-    
     # initial trajectory
     N_ = Int(floor(evolution_time / dt)) + 1
     X0 = [V(zeros(n_)) for k = 1:N_]
     X0[1] .= x0
     U0 = [V([
-        fill(1e-10, 2);
-        fill(1e-10, 2);
+        fill(1e-6, 2);
+        fill(1e-6, 2);
+        fill(dt, model.time_optimal ? 1 : 0);
     ]) for k = 1:N_-1]
     ts = V(zeros(N_))
     ts[1] = t0
@@ -317,35 +321,94 @@ function run_traj(;fock_state=0, evolution_time=2000., dt=1., verbose=true,
         ts[k + 1] = ts[k] + dt
         RD.discrete_dynamics!(X0[k + 1], EXP, model, X0[k], U0[k], ts[k], dt)
     end
-    
+
+    # bound constraints
+    x_max_amid = fill(Inf, n_)
+    x_max_abnd = fill(Inf, n_)
+    x_max_cnp = fill(Inf, n_)
+    x_max_dt = fill(Inf, n_)
+    x_min_amid = fill(-Inf, n_)
+    x_min_abnd = fill(-Inf, n_)
+    x_min_cnp = fill(-Inf, n_)
+    x_min_dt = fill(-Inf, n_)
+    u_max_amid = fill(Inf, m_)
+    u_max_abnd = fill(Inf, m_)
+    u_max_cnp = fill(Inf, m_)
+    u_max_dt = fill(Inf, m_)
+    u_min_amid = fill(-Inf, m_)
+    u_min_abnd = fill(-Inf, m_)
+    u_min_cnp = fill(-Inf, m_)
+    u_min_dt = fill(-Inf, m_)
+    # constrain the control amplitudes
+    x_max_amid[model.controls_idx[1:2]] .= MAX_AMP_NORM_TRANSMON
+    x_max_amid[model.controls_idx[3:4]] .= MAX_AMP_NORM_CAVITY
+    x_min_amid[model.controls_idx[1:2]] .= -MAX_AMP_NORM_TRANSMON
+    x_min_amid[model.controls_idx[3:4]] .= -MAX_AMP_NORM_CAVITY
+    # control amplitudes go to zero at boundary
+    x_max_abnd[model.controls_idx] .= 0
+    x_min_abnd[model.controls_idx] .= 0
+    # disallow population of the highest cavity level
+    cavity_nopop_idxs = reduce(vcat, [cavity_idxs(i) for i in cavity_nopop_levels])
+    x_max_cnp[cavity_nopop_idxs] .= cavity_nopop_tol
+    x_min_cnp[cavity_nopop_idxs] .= -cavity_nopop_tol
+    # bound the time step
+    if time_optimal
+        u_max_dt[model.dt_idx] .= sqrt(dt * 1e1)
+        u_min_dt[model.dt_idx] .= sqrt(dt * 1e-1)
+    end
+    # vectorize
+    x_max_amid = V(x_max_amid)
+    x_max_abnd = V(x_max_abnd)
+    x_max_cnp = V(x_max_cnp)
+    x_max_dt = V(x_max_dt)
+    x_min_amid = V(x_min_amid)
+    x_min_abnd = V(x_min_abnd)
+    x_min_cnp = V(x_min_cnp)
+    x_min_dt = V(x_min_dt)
+    u_max_amid = V(u_max_amid)
+    u_max_abnd = V(u_max_abnd)
+    u_max_cnp = V(u_max_cnp)
+    u_max_dt = V(u_max_dt)
+    u_min_amid = V(u_min_amid)
+    u_min_abnd = V(u_min_abnd)
+    u_min_cnp = V(u_min_cnp)
+    u_min_dt = V(u_min_dt)
+
+    # constraints
+    constraints = TO.ConstraintList(n_, m_, N_, M, V)
+    bc_amid = TO.BoundConstraint(n_, m_, x_max_amid, x_min_amid, u_max_amid, u_min_amid, M, V)
+    TO.add_constraint!(constraints, bc_amid, V(2:N_-2))
+    bc_abnd = TO.BoundConstraint(n_, m_, x_max_abnd, x_min_abnd, u_max_abnd, u_min_abnd, M, V)
+    TO.add_constraint!(constraints, bc_abnd, V(N_-1:N_-1))
+    bc_cnp = TO.BoundConstraint(n_, m_, x_max_cnp, x_min_cnp, u_max_cnp, u_min_cnp, M, V)
+    # TO.add_constraint!(constraints, bc_cnp, V(2:N_-1))
+    if time_optimal
+        bc_dt = TO.BoundConstraint(n_, m_, x_max_dt, x_min_dt, u_max_dt, u_min_dt, M, V)
+        TO.add_constraint!(constraints, bc_dt, V(1:N_-1))        
+    end
+    goal_idxs = [model.state1_idx;]
+    gc_f = TO.GoalConstraint(n_, m_, xf, goal_idxs, M, V)
+    TO.add_constraint!(constraints, gc_f, V(N_:N_))
+
     # cost function
     Q = V(zeros(n_))
     Q[model.state1_idx] .= qs[1]
-    Q[cavity_nopop_idxs] .+= qs[6]
-    Q[model.controls_idx] .= qs[2]
-    Q[model.dcontrols_idx] .= qs[3]
+    Q[cavity_nopop_idxs] .+= qs[2]
+    Q[model.controls_idx] .= qs[3]
+    Q[model.dcontrols_idx] .= qs[4]
     if model.derivative_count == 1
-        Q[model.dstate1_idx] .= qs[4]
+        Q[model.dstate1_idx] .= qs[5]
     end
     Q = Diagonal(Q)
     Qf = Q * N_
     R = V(zeros(m_))
-    R[model.d2controls_idx] .= qs[5]
+    R[model.d2controls_idx] .= qs[6]
+    if model.time_optimal
+        R[model.dt_idx] .= qs[7]
+    end
     R = Diagonal(R)
     objective = LQRObjective(Q, Qf, R, xf, n_, m_, N_, M, V)
-
-    # must satisfy control amplitude constraints
-    control_amp = TO.BoundConstraint(n_, m_, x_max, x_min, u_max, u_min, M, V)
-    # must statisfy controls start and stop at 0
-    control_amp_boundary = TO.BoundConstraint(n_, m_, x_max_boundary, x_min_boundary,
-                                              u_max_boundary, u_min_boundary, M, V)
-    # must reach target state, must have integral of controls = 0
-    target_astate_constraint = TO.GoalConstraint(n_, m_, xf, model.state1_idx, M, V)
-    # build constraints
-    constraints = TO.ConstraintList(n_, m_, N_, M, V)
-    TO.add_constraint!(constraints, control_amp, V(2:N_-2))
-    TO.add_constraint!(constraints, control_amp_boundary, V(N_-1:N_-1))
-    TO.add_constraint!(constraints, target_astate_constraint, V(N_:N_))
+    
     # build problem
     prob = Problem(EXP, model, objective, constraints, X0, U0, ts, N_, M, Md, V)
     # options
@@ -363,6 +426,7 @@ function run_traj(;fock_state=0, evolution_time=2000., dt=1., verbose=true,
         penalty_scaling=penalty_scaling, max_state_value=max_state_value,
         max_control_value=max_control_value
     )
+    
     # solve
     solver = ALTROSolver(prob, opts)
     if benchmark
@@ -371,42 +435,45 @@ function run_traj(;fock_state=0, evolution_time=2000., dt=1., verbose=true,
         benchmark_result = nothing
         Altro.solve!(solver)
     end
-    println(solver.stats.status)
+    println("status: $(solver.stats.status)")
+    
     # post-process
     acontrols_raw = Altro.controls(solver)
     acontrols_arr = permutedims(reduce(hcat, map(Array, acontrols_raw)), [2, 1])
     astates_raw = Altro.states(solver)
     astates_arr = permutedims(reduce(hcat, map(Array, astates_raw)), [2, 1])
-    Q_raw = Array(Q)
-    Q_arr = [Q_raw[i, i] for i in 1:size(Q_raw)[1]]
-    Qf_raw = Array(Qf)
-    Qf_arr = [Qf_raw[i, i] for i in 1:size(Qf_raw)[1]]
-    R_raw = Array(R)
-    R_arr = [R_raw[i, i] for i in 1:size(R_raw)[1]]
     state1_idx_arr = Array(model.state1_idx)
-    cidx_arr = Array(model.controls_idx)
-    d2cidx_arr = Array(model.d2controls_idx)
+    controls_idx_arr = Array(model.controls_idx)
+    dcontrols_idx_arr = Array(model.dcontrols_idx)
+    d2controls_idx_arr = Array(model.d2controls_idx)
+    dt_idx_arr = Array(model.dt_idx)
     max_v, max_v_info = Altro.max_violation_info(solver)
     iterations_ = Altro.iterations(solver)
+    if time_optimal
+        ts = cumsum(map(x -> x^2, acontrols_arr[:,model.dt_idx[1]]))
+    end
 
     result = Dict(
         "acontrols" => acontrols_arr,
-        "controls_idx" => cidx_arr,
-        "d2controls_dt2_idx" => d2cidx_arr,
-        "evolution_time" => evolution_time,
         "astates" => astates_arr,
-        "state1_idx" => state1_idx_arr,
-        "Q" => Q_arr,
-        "Qf" => Qf_arr,
-        "R" => R_arr,
-        "max_v" => max_v,
-        "max_v_info" => max_v_info,
         "dt" => dt,
         "ts" => ts,
+        "state1_idx" => state1_idx_arr,
+        "controls_idx" => controls_idx_arr,
+        "dcontrols_idx" => dcontrols_idx_arr,
+        "d2controls_idx" => d2controls_idx_arr,
+        "dt_idx" => dt_idx_arr,
+        "evolution_time" => evolution_time,
+        "max_v" => max_v,
+        "max_v_info" => max_v_info,
+        "qs" => qs,
+        "iterations" => iterations_,
+        "time_optimal" => Integer(time_optimal),
+        "hdim_iso" => HDIM_ISO,
+        "save_type" => Int(jl),
         "max_penalty" => max_penalty,
         "ilqr_ctol" => ilqr_ctol,
         "ilqr_gtol" => ilqr_gtol,
-        "save_type" => Integer(jl),
         "iterations" => iterations_,
         "max_iterations" => max_iterations,
         "pn_steps" => pn_steps,
@@ -415,7 +482,6 @@ function run_traj(;fock_state=0, evolution_time=2000., dt=1., verbose=true,
         "fock_state" => fock_state,
         "transmon_state_count" => TRANSMON_STATE_COUNT,
         "cavity_state_count" => CAVITY_STATE_COUNT,
-        "hdim_iso" => HDIM_ISO
     )
     
     # save
@@ -435,6 +501,10 @@ function run_traj(;fock_state=0, evolution_time=2000., dt=1., verbose=true,
     return result
 end
 
+"""
+indices into the state vector for each cavity amplitude at the
+given level
+"""
 @inline cavity_idxs(level::Int) = (
     TRANSMON_STATE_COUNT * level
     .+ [Array(1:TRANSMON_STATE_COUNT);
@@ -444,23 +514,30 @@ end
 function test_dynamics()
     # problem
     derivative_count = 1
+    time_optimal = true
     Hs = [M(H) for H in (NEGI_H0ROT_ISO, NEGI_H1R_ISO, NEGI_H1I_ISO, NEGI_H2R_ISO, NEGI_H2I_ISO,
                          NEGI_DH0_ISO)]
-    model = Model(M, Md, V, Hs, derivative_count)
+    model = Model(M, Md, V, Hs, derivative_count, time_optimal)
     n, m = size(model)
     # state + control
     ix = 1:n
     iu = (1:m) .+ n
     x0 = ones(n)
-    u0 = fill(1e-4, 4)
+    u0 = ones(m)
     z0 = [x0; u0]
-    dt = 1.
+    dt = 2.
     t = 1.
     # tmp
     AB = zeros(n, n + m)
     ABp = zeros(n, n + m)
     Ap = zeros(n, n)
     Bp = zeros(n, m)
+    x_tmp = zeros(n)
+    # dynamics
+    RD.discrete_dynamics!(x_tmp, EXP, model, x0, u0, t, dt)
+    x = RD.discrete_dynamics(EXP, model, x0, u0, t, dt)
+    @assert x ≈ x_tmp
+    # jacobian
     # execute autodiff
     f(z) = RD.discrete_dynamics(EXP, model, z[ix], z[iu], t, dt)
     FD.jacobian!(AB, f, z0)

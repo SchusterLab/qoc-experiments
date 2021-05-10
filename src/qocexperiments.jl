@@ -14,7 +14,6 @@ using HDF5
 using LinearAlgebra
 using Plots
 using Printf
-using RobotDynamics
 
 # plotting configuration and constants
 ENV["GKSwstype"] = "nul"
@@ -41,6 +40,13 @@ end
 @enum ArrayType begin
     cpu = 1
     gpu = 2
+end
+
+@enum GateType begin
+    xpiby2 = 1
+    ypiby2 = 2
+    zpiby2 = 3
+    xpi = 4
 end
 
 
@@ -95,18 +101,12 @@ function grab_controls(save_file_path)
         if save_type == jl
             cidx = read(save_file, "controls_idx")
             controls = read(save_file, "astates")[1:end - 1, cidx]
-            evolution_time = read(save_file, "evolution_time")
-            controls_dt_inv = haskey(save_file, "dt") ? read(save_file, "dt")^(-1) : DT_PREF_INV
-        elseif save_type == samplejl
-            controls = read(save_file, "controls_sample")[1:end - 1]
-            evolution_time = read(save_file, "evolution_time_sample")
-            controls_dt_inv = DT_PREF_INV
+            ts = read(save_file, "ts")
         elseif save_type == py
             controls = permutedims(read(save_file, "controls"), (2, 1))
-            evolution_time = read(save_file, "evolution_time")
-            controls_dt_inv = DT_PREF_INV
+            ts = read(save_file, "ts")
         end
-        return (controls, controls_dt_inv, evolution_time)
+        return (controls, ts)
     end
 
     return data
@@ -130,15 +130,17 @@ end
 
 
 function plot_controls(save_file_paths, plot_file_path;
-                       labels=nothing,
-                       title="", colors=nothing, print_out=true,
-                       legend=nothing, d2pi=false)
-    fig = Plots.plot(dpi=DPI, title=title, legend=legend)
+                       labels=nothing, title="", colors=nothing,
+                       legend=nothing, d2pi=false, xlims=nothing, ylims=nothing)
+    fig = Plots.plot(dpi=DPI, title=title, legend=legend, xlims=xlims, ylims=ylims)
     for (i, save_file_path) in enumerate(save_file_paths)
         # Grab and prep data.
-        (controls, controls_dt_inv, evolution_time) = grab_controls(save_file_path)
-        (control_eval_count, control_count) = size(controls)
-        control_eval_times = Array(0:control_eval_count - 1) / controls_dt_inv
+        (controls_, ts) = grab_controls(save_file_path)
+        # add a point to the end of controls for display purposes
+        (knot_count, control_count) = size(controls_)
+        controls = zeros(knot_count + 1, control_count)
+        controls[1:knot_count, :] .= controls_
+        controls[knot_count + 1, :] .= controls_[end, :]
         if d2pi
             controls = controls ./ (2 * pi)
         end
@@ -147,17 +149,14 @@ function plot_controls(save_file_paths, plot_file_path;
         for j = 1:control_count
             label = isnothing(labels) ? nothing : labels[i][j]
             color = isnothing(colors) ? :auto : colors[i][j]
-            Plots.plot!(control_eval_times, controls[:, j],
+            Plots.plot!(ts, controls[:, j],
                         label=label, color=color)
         end
     end
     Plots.xlabel!("Time (ns)")
     Plots.ylabel!("Amplitude (GHz)")
     Plots.savefig(fig, plot_file_path)
-    if print_out
-        println("Plotted to $(plot_file_path)")
-    end
-    return
+    return plot_file_path
 end
 
 
@@ -200,8 +199,6 @@ end
 
 
 ### MATRIX EXPONENTIAL ###
-
-# TODO: Replace index addition with 5-argument-mul!
 
 function getrf!(A::AbstractMatrix)
     (A_LU, A_ipiv, info) = LAPACK.getrf!(A)
