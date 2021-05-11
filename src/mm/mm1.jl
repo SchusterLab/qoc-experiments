@@ -281,7 +281,7 @@ function run_traj(;fock_state=0, evolution_time=2000., dt=1., verbose=true,
                   max_cost=1e8, benchmark=false, ilqr_ctol=1e-2, ilqr_gtol=1e-4,
                   ilqr_max_iterations=300, max_state_value=1e10,
                   max_control_value=1e10, cavity_nopop_levels=9:CAVITY_STATE_COUNT-1,
-                  cavity_nopop_tol=1e-1, max_penalty=1e11)
+                  cavity_nopop_tol=1e-1, max_penalty=1e11, al_vtol=1e-4)
     # construct model
     Hs = [M(H) for H in (NEGI_H0ROT_ISO, NEGI_H1R_ISO, NEGI_H1I_ISO, NEGI_H2R_ISO, NEGI_H2I_ISO,
                          NEGI_DH0_ISO)]
@@ -372,10 +372,11 @@ function run_traj(;fock_state=0, evolution_time=2000., dt=1., verbose=true,
     # constraints
     constraints = Altro.ConstraintList(n_, m_, N_, M, V)
     bc_amid = Altro.BoundConstraint(n_, m_, x_max_amid, x_min_amid, u_max_amid, u_min_amid, M, V)
-    Altro.add_constraint!(constraints, bc_amid, V(2:N_-2))
+    # Altro.add_constraint!(constraints, bc_amid, V(2:N_-2))
     bc_abnd = Altro.BoundConstraint(n_, m_, x_max_abnd, x_min_abnd, u_max_abnd, u_min_abnd, M, V)
-    Altro.add_constraint!(constraints, bc_abnd, V(N_-1:N_-1))
-    bc_cnp = Altro.BoundConstraint(n_, m_, x_max_cnp, x_min_cnp, u_max_cnp, u_min_cnp, M, V)
+    # Altro.add_constraint!(constraints, bc_abnd, V(N_-1:N_-1))
+    bc_cnp = Altro.BoundConstraint(n_, m_, x_max_cnp, x_min_cnp, u_max_cnp, u_min_cnp, M, V;
+                                   params=ConstraintParams(a_tol=al_vtol))
     Altro.add_constraint!(constraints, bc_cnp, V(2:N_-1))
     if time_optimal
         bc_dt = Altro.BoundConstraint(n_, m_, x_max_dt, x_min_dt, u_max_dt, u_min_dt, M, V)
@@ -419,7 +420,8 @@ function run_traj(;fock_state=0, evolution_time=2000., dt=1., verbose=true,
         iterations=max_iterations,
         max_cost_value=max_cost, ilqr_ctol=ilqr_ctol, ilqr_gtol=ilqr_gtol,
         max_state_value=max_state_value,
-        max_control_value=max_control_value, penalty_max=max_penalty
+        max_control_value=max_control_value, penalty_max=max_penalty,
+        al_vtol=al_vtol
     )
     
     # solve
