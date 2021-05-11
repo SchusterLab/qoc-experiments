@@ -11,13 +11,9 @@ using ForwardDiff
 using HDF5
 using IterTools
 using LinearAlgebra
-using RobotDynamics
 using SparseArrays
 using StaticArrays
-using TrajectoryOptimization
 const FD = ForwardDiff
-const RD = RobotDynamics
-const TO = TrajectoryOptimization
 
 # paths
 const EXPERIMENT_META = "mm"
@@ -92,9 +88,9 @@ end
 @inline V(vec_) = vec_
 
 # dynamics
-abstract type EXP <: RD.Explicit end
+abstract type EXP <: Altro.Explicit end
 
-function RD.discrete_dynamics(::Type{EXP}, model::Model,
+function Altro.discrete_dynamics(::Type{EXP}, model::Model,
                               astate::AbstractVector,
                               acontrol::AbstractVector, time::Real, dt_::Real)
     dt = !model.time_optimal ? dt_ : acontrol[model.dt_idx[1]]^2
@@ -125,9 +121,9 @@ function RD.discrete_dynamics(::Type{EXP}, model::Model,
     return astate_
 end
 
-function RD.discrete_dynamics!(astate_::AbstractVector, ::Type{EXP}, model::Model,
-                               astate::AbstractVector,
-                               acontrol::AbstractVector, time::Real, dt_::Real)
+function Altro.discrete_dynamics!(astate_::AbstractVector, ::Type{EXP}, model::Model,
+                                  astate::AbstractVector,
+                                  acontrol::AbstractVector, time::Real, dt_::Real)
     dt = !model.time_optimal ? dt_ : acontrol[model.dt_idx[1]]^2
     # get hamiltonian and unitary
     H = model.mtmp[29]
@@ -166,10 +162,9 @@ function RD.discrete_dynamics!(astate_::AbstractVector, ::Type{EXP}, model::Mode
     return nothing
 end
 
-function RD.discrete_jacobian!(D::AbstractMatrix, A::AbstractMatrix, B::AbstractMatrix,
-                               ::Type{EXP}, model::Model, astate::AbstractVector,
-                               acontrol::AbstractVector, time::Real, dt_::Real,
-                               ix::AbstractVector, iu::AbstractVector)
+function Altro.discrete_jacobian!(A::AbstractMatrix, B::AbstractMatrix,
+                                  ::Type{EXP}, model::Model, astate::AbstractVector,
+                                  acontrol::AbstractVector, time::Real, dt_::Real)
     dt = !model.time_optimal ? dt_ : acontrol[model.dt_idx[1]]^2
     sqrt_dt = sqrt(dt)
     # get hamiltonian and unitary
@@ -282,11 +277,11 @@ end
 function run_traj(;fock_state=0, evolution_time=2000., dt=1., verbose=true,
                   derivative_count=0, time_optimal=false,
                   qs=[1e0, 1e-1, 1e-1, 1e-1, 1e-1, 1e-1, 1e-1], smoke_test=false,
-                  pn_steps=2, max_penalty=1e11, save=true, max_iterations=Int64(2e5),
+                  pn_steps=2, save=true, max_iterations=Int64(2e5),
                   max_cost=1e8, benchmark=false, ilqr_ctol=1e-2, ilqr_gtol=1e-4,
-                  ilqr_max_iterations=300, penalty_scaling=10., max_state_value=1e10,
+                  ilqr_max_iterations=300, max_state_value=1e10,
                   max_control_value=1e10, cavity_nopop_levels=9:CAVITY_STATE_COUNT-1,
-                  cavity_nopop_tol=1e-1)
+                  cavity_nopop_tol=1e-1, max_penalty=1e11)
     # construct model
     Hs = [M(H) for H in (NEGI_H0ROT_ISO, NEGI_H1R_ISO, NEGI_H1I_ISO, NEGI_H2R_ISO, NEGI_H2I_ISO,
                          NEGI_DH0_ISO)]
@@ -319,7 +314,7 @@ function run_traj(;fock_state=0, evolution_time=2000., dt=1., verbose=true,
     ts[1] = t0
     for k = 1:N_-1
         ts[k + 1] = ts[k] + dt
-        RD.discrete_dynamics!(X0[k + 1], EXP, model, X0[k], U0[k], ts[k], dt)
+        Altro.discrete_dynamics!(X0[k + 1], EXP, model, X0[k], U0[k], ts[k], dt)
     end
 
     # bound constraints
@@ -375,23 +370,23 @@ function run_traj(;fock_state=0, evolution_time=2000., dt=1., verbose=true,
     u_min_dt = V(u_min_dt)
 
     # constraints
-    constraints = TO.ConstraintList(n_, m_, N_, M, V)
-    bc_amid = TO.BoundConstraint(n_, m_, x_max_amid, x_min_amid, u_max_amid, u_min_amid, M, V)
-    TO.add_constraint!(constraints, bc_amid, V(2:N_-2))
-    bc_abnd = TO.BoundConstraint(n_, m_, x_max_abnd, x_min_abnd, u_max_abnd, u_min_abnd, M, V)
-    TO.add_constraint!(constraints, bc_abnd, V(N_-1:N_-1))
-    bc_cnp = TO.BoundConstraint(n_, m_, x_max_cnp, x_min_cnp, u_max_cnp, u_min_cnp, M, V)
-    # TO.add_constraint!(constraints, bc_cnp, V(2:N_-1))
+    constraints = Altro.ConstraintList(n_, m_, N_, M, V)
+    bc_amid = Altro.BoundConstraint(n_, m_, x_max_amid, x_min_amid, u_max_amid, u_min_amid, M, V)
+    Altro.add_constraint!(constraints, bc_amid, V(2:N_-2))
+    bc_abnd = Altro.BoundConstraint(n_, m_, x_max_abnd, x_min_abnd, u_max_abnd, u_min_abnd, M, V)
+    Altro.add_constraint!(constraints, bc_abnd, V(N_-1:N_-1))
+    bc_cnp = Altro.BoundConstraint(n_, m_, x_max_cnp, x_min_cnp, u_max_cnp, u_min_cnp, M, V)
+    Altro.add_constraint!(constraints, bc_cnp, V(2:N_-1))
     if time_optimal
-        bc_dt = TO.BoundConstraint(n_, m_, x_max_dt, x_min_dt, u_max_dt, u_min_dt, M, V)
-        TO.add_constraint!(constraints, bc_dt, V(1:N_-1))        
+        bc_dt = Altro.BoundConstraint(n_, m_, x_max_dt, x_min_dt, u_max_dt, u_min_dt, M, V)
+        Altro.add_constraint!(constraints, bc_dt, V(1:N_-1))        
     end
     goal_idxs = [model.state1_idx;]
-    gc_f = TO.GoalConstraint(n_, m_, xf, goal_idxs, M, V)
-    TO.add_constraint!(constraints, gc_f, V(N_:N_))
+    gc_f = Altro.GoalConstraint(n_, m_, xf, goal_idxs, M, V)
+    Altro.add_constraint!(constraints, gc_f, V(N_:N_))
 
     # cost function
-    Q = V(zeros(n_))
+    Q = zeros(n_)
     Q[model.state1_idx] .= qs[1]
     Q[cavity_nopop_idxs] .+= qs[2]
     Q[model.controls_idx] .= qs[3]
@@ -399,7 +394,7 @@ function run_traj(;fock_state=0, evolution_time=2000., dt=1., verbose=true,
     if model.derivative_count == 1
         Q[model.dstate1_idx] .= qs[5]
     end
-    Q = Diagonal(Q)
+    Q = Diagonal(V(Q))
     Qf = Q * N_
     R = V(zeros(m_))
     R[model.d2controls_idx] .= qs[6]
@@ -418,13 +413,13 @@ function run_traj(;fock_state=0, evolution_time=2000., dt=1., verbose=true,
     al_max_iterations = smoke_test ? 1 : 30
     n_steps = smoke_test ? 1 : pn_steps
     opts = SolverOptions(
-        penalty_max=max_penalty, verbose_pn=verbose_pn, verbose=verbose_,
+        verbose_pn=verbose_pn, verbose=verbose_,
         projected_newton=true, ilqr_max_iterations=ilqr_max_iterations,
         al_max_iterations=al_max_iterations,
         iterations=max_iterations,
         max_cost_value=max_cost, ilqr_ctol=ilqr_ctol, ilqr_gtol=ilqr_gtol,
-        penalty_scaling=penalty_scaling, max_state_value=max_state_value,
-        max_control_value=max_control_value
+        max_state_value=max_state_value,
+        max_control_value=max_control_value, penalty_max=max_penalty
     )
     
     # solve
@@ -471,7 +466,6 @@ function run_traj(;fock_state=0, evolution_time=2000., dt=1., verbose=true,
         "time_optimal" => Integer(time_optimal),
         "hdim_iso" => HDIM_ISO,
         "save_type" => Int(jl),
-        "max_penalty" => max_penalty,
         "ilqr_ctol" => ilqr_ctol,
         "ilqr_gtol" => ilqr_gtol,
         "iterations" => iterations_,
@@ -511,6 +505,13 @@ given level
         Int(HDIM_ISO/2) .+ Array(1:TRANSMON_STATE_COUNT)]
 )
 
+function test_model(;derivative_count=0, time_optimal=false)
+    Hs = [M(H) for H in (NEGI_H0ROT_ISO, NEGI_H1R_ISO, NEGI_H1I_ISO, NEGI_H2R_ISO, NEGI_H2I_ISO,
+                         NEGI_DH0_ISO)]
+    model = Model(M, Md, V, Hs, derivative_count, time_optimal)
+    return model
+end
+
 function test_dynamics()
     # problem
     derivative_count = 1
@@ -534,17 +535,17 @@ function test_dynamics()
     Bp = zeros(n, m)
     x_tmp = zeros(n)
     # dynamics
-    RD.discrete_dynamics!(x_tmp, EXP, model, x0, u0, t, dt)
-    x = RD.discrete_dynamics(EXP, model, x0, u0, t, dt)
+    Altro.discrete_dynamics!(x_tmp, EXP, model, x0, u0, t, dt)
+    x = Altro.discrete_dynamics(EXP, model, x0, u0, t, dt)
     @assert x ≈ x_tmp
     # jacobian
     # execute autodiff
-    f(z) = RD.discrete_dynamics(EXP, model, z[ix], z[iu], t, dt)
+    f(z) = Altro.discrete_dynamics(EXP, model, z[ix], z[iu], t, dt)
     FD.jacobian!(AB, f, z0)
     A = AB[ix, ix]
     B = AB[ix, iu]
     # execute hand
-    RD.discrete_jacobian!(ABp, Ap, Bp, EXP, model, x0, u0, t, dt, ix, iu)
+    Altro.discrete_jacobian!(ABp, Ap, Bp, EXP, model, x0, u0, t, dt, ix, iu)
     # check
     @assert A ≈ Ap
     @assert B ≈ Bp
@@ -606,7 +607,7 @@ function gen_dparam(save_file_path; trial_count=1000, sigma_max=1e-4, save=true)
         mh1 .= negi_h0
         # rollout
         for k = 1:N-1
-            RD.discrete_dynamics!(X[k + 1], EXP, model, X[k], U[k], ts[k], dt)
+            Altro.discrete_dynamics!(X[k + 1], EXP, model, X[k], U[k], ts[k], dt)
         end
         ψN = get_vec_uniso(X[N][model.state1_idx])
         gate_error = 1 - abs(ψT'ψN)^2

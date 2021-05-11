@@ -13,7 +13,6 @@ include(joinpath(WDIR, "src", "qocexperiments.jl"))
 # e.g. two functions have the same name.
 using HDF5
 using LinearAlgebra
-using TrajectoryOptimization
 import Plots
 using Printf
 using StaticArrays
@@ -30,10 +29,8 @@ const TRANSMON_FREQ = 2π * 4.99
 const CHI_E_2 = 2π * -1.33e-3
 const CAVITY_FREQ_2 = 2π * 5.96
 const KAPPA_2 = 2π * 5.23e-6
-# const MAX_AMP_NORM_TRANSMON = 2π * 4e-3
-# const MAX_AMP_NORM_CAVITY = 2π * 4e-4
-const MAX_AMP_NORM_TRANSMON = 2π * 4e-2
-const MAX_AMP_NORM_CAVITY = 2π * 4e-3
+const MAX_AMP_NORM_TRANSMON = 2π * 4e-3
+const MAX_AMP_NORM_CAVITY = 2π * 4e-4
 
 # Define the system.
 const TRANSMON_STATE_COUNT = 2
