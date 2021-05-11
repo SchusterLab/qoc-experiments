@@ -278,10 +278,11 @@ function run_traj(;fock_state=0, evolution_time=2000., dt=1., verbose=true,
                   derivative_count=0, time_optimal=false,
                   qs=[1e0, 1e-1, 1e-1, 1e-1, 1e-1, 1e-1, 1e-1], smoke_test=false,
                   pn_steps=2, save=true, max_iterations=Int64(2e5),
-                  max_cost=1e8, benchmark=false, ilqr_ctol=1e-2, ilqr_gtol=1e-4,
+                  max_cost=1e12, benchmark=false, ilqr_ctol=1e-2, ilqr_gtol=1e-4,
                   ilqr_max_iterations=300, max_state_value=1e10,
-                  max_control_value=1e10, cavity_nopop_levels=9:CAVITY_STATE_COUNT-1,
-                  cavity_nopop_tol=1e-1, max_penalty=1e11, al_vtol=1e-4)
+                  max_control_value=1e10, al_max_iterations=30,
+                  cnp_levels=CAVITY_STATE_COUNT-1:CAVITY_STATE_COUNT-1,
+                  cnp_tol=1e-1, max_penalty=1e11, al_vtol=1e-4)
     # construct model
     Hs = [M(H) for H in (NEGI_H0ROT_ISO, NEGI_H1R_ISO, NEGI_H1I_ISO, NEGI_H2R_ISO, NEGI_H2I_ISO,
                          NEGI_DH0_ISO)]
@@ -343,13 +344,13 @@ function run_traj(;fock_state=0, evolution_time=2000., dt=1., verbose=true,
     x_max_abnd[model.controls_idx] .= 0
     x_min_abnd[model.controls_idx] .= 0
     # disallow population of the highest cavity level
-    cavity_nopop_idxs = reduce(vcat, [cavity_idxs(i) for i in cavity_nopop_levels])
-    x_max_cnp[cavity_nopop_idxs] .= cavity_nopop_tol
-    x_min_cnp[cavity_nopop_idxs] .= -cavity_nopop_tol
+    cnp_idxs = reduce(vcat, [cavity_idxs(i) for i in cnp_levels])
+    x_max_cnp[cnp_idxs] .= 0 # cavity_nopop_tol
+    x_min_cnp[cnp_idxs] .= 0 # -cavity_nopop_tol
     # bound the time step
     if time_optimal
-        u_max_dt[model.dt_idx] .= sqrt(dt * 1e1)
-        u_min_dt[model.dt_idx] .= sqrt(dt * 1e-1)
+        u_max_dt[model.dt_idx] .= sqrt(dt * 2)
+        u_min_dt[model.dt_idx] .= sqrt(dt * 5e-1)
     end
     # vectorize
     x_max_amid = V(x_max_amid)
@@ -371,25 +372,29 @@ function run_traj(;fock_state=0, evolution_time=2000., dt=1., verbose=true,
 
     # constraints
     constraints = Altro.ConstraintList(n_, m_, N_, M, V)
-    bc_amid = Altro.BoundConstraint(n_, m_, x_max_amid, x_min_amid, u_max_amid, u_min_amid, M, V)
-    # Altro.add_constraint!(constraints, bc_amid, V(2:N_-2))
-    bc_abnd = Altro.BoundConstraint(n_, m_, x_max_abnd, x_min_abnd, u_max_abnd, u_min_abnd, M, V)
-    # Altro.add_constraint!(constraints, bc_abnd, V(N_-1:N_-1))
-    bc_cnp = Altro.BoundConstraint(n_, m_, x_max_cnp, x_min_cnp, u_max_cnp, u_min_cnp, M, V;
-                                   params=ConstraintParams(a_tol=al_vtol))
-    Altro.add_constraint!(constraints, bc_cnp, V(2:N_-1))
+    bc_amid = Altro.BoundConstraint(x_max_amid, x_min_amid, u_max_amid, u_min_amid, n_, m_, M, V)
+    Altro.add_constraint!(constraints, bc_amid, V(2:N_-2))
+    bc_abnd = Altro.BoundConstraint(x_max_abnd, x_min_abnd, u_max_abnd, u_min_abnd, n_, m_, M, V)
+    Altro.add_constraint!(constraints, bc_abnd, V(N_-1:N_-1))
+    nbc_cnp = Altro.NormBoundConstraint(STATE, cnp_idxs, cnp_tol, n_, m_, M, V)
+    Altro.add_constraint!(constraints, nbc_cnp, V(2:N_-1))
     if time_optimal
-        bc_dt = Altro.BoundConstraint(n_, m_, x_max_dt, x_min_dt, u_max_dt, u_min_dt, M, V)
+        bc_dt = Altro.BoundConstraint(x_max_dt, x_min_dt, u_max_dt, u_min_dt, n_, m_, M, V)
         Altro.add_constraint!(constraints, bc_dt, V(1:N_-1))        
     end
     goal_idxs = [model.state1_idx;]
-    gc_f = Altro.GoalConstraint(n_, m_, xf, goal_idxs, M, V)
+    gc_f = Altro.GoalConstraint(xf, goal_idxs, n_, m_, M, V)
     Altro.add_constraint!(constraints, gc_f, V(N_:N_))
 
     # cost function
     Q = zeros(n_)
     Q[model.state1_idx] .= qs[1]
-    Q[cavity_nopop_idxs] .+= qs[2]
+    # qss = qs[1]
+    # for level = (fock_state + 1):(CAVITY_STATE_COUNT - 1)
+    #     qss *= 2
+    #     level_idxs = cavity_idxs(level)
+    #     Q[level_idxs] .+= qss
+    # end
     Q[model.controls_idx] .= qs[3]
     Q[model.dcontrols_idx] .= qs[4]
     if model.derivative_count == 1
@@ -411,7 +416,7 @@ function run_traj(;fock_state=0, evolution_time=2000., dt=1., verbose=true,
     verbose_pn = verbose ? true : false
     verbose_ = verbose ? 2 : 0
     ilqr_max_iterations = smoke_test ? 1 : ilqr_max_iterations
-    al_max_iterations = smoke_test ? 1 : 30
+    al_max_iterations = smoke_test ? 1 : al_max_iterations
     n_steps = smoke_test ? 1 : pn_steps
     opts = SolverOptions(
         verbose_pn=verbose_pn, verbose=verbose_,
