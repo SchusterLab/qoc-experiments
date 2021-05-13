@@ -274,7 +274,7 @@ function Altro.discrete_jacobian!(A::AbstractMatrix, B::AbstractMatrix,
 end
 
 
-function run_traj(;fock_state=0, evolution_time=2000., dt=1., verbose=true,
+function run_traj(;target_level=0, evolution_time=2000., dt=1., verbose=true,
                   derivative_count=0, time_optimal=false,
                   qs=[1e0, 1e-1, 1e-1, 1e-1, 1e-1, 1e-1, 1e-1], smoke_test=false,
                   pn_steps=2, save=true, max_iterations=Int64(2e5),
@@ -297,9 +297,8 @@ function run_traj(;fock_state=0, evolution_time=2000., dt=1., verbose=true,
 
     # target state
     xf = zeros(n_)
-    cavity_state = zeros(CAVITY_STATE_COUNT)
-    cavity_state[fock_state + 1] = 1
-    xf[model.state1_idx] = get_vec_iso(kron(cavity_state, TRANSMON_G))
+    cavity_state_ = cavity_state(target_level)
+    xf[model.state1_idx] = get_vec_iso(kron(cavity_state_, TRANSMON_G))
     xf = V(xf)
 
     # initial trajectory
@@ -321,19 +320,15 @@ function run_traj(;fock_state=0, evolution_time=2000., dt=1., verbose=true,
     # bound constraints
     x_max_amid = fill(Inf, n_)
     x_max_abnd = fill(Inf, n_)
-    x_max_cnp = fill(Inf, n_)
     x_max_dt = fill(Inf, n_)
     x_min_amid = fill(-Inf, n_)
     x_min_abnd = fill(-Inf, n_)
-    x_min_cnp = fill(-Inf, n_)
     x_min_dt = fill(-Inf, n_)
     u_max_amid = fill(Inf, m_)
     u_max_abnd = fill(Inf, m_)
-    u_max_cnp = fill(Inf, m_)
     u_max_dt = fill(Inf, m_)
     u_min_amid = fill(-Inf, m_)
     u_min_abnd = fill(-Inf, m_)
-    u_min_cnp = fill(-Inf, m_)
     u_min_dt = fill(-Inf, m_)
     # constrain the control amplitudes
     x_max_amid[model.controls_idx[1:2]] .= MAX_AMP_NORM_TRANSMON
@@ -343,10 +338,6 @@ function run_traj(;fock_state=0, evolution_time=2000., dt=1., verbose=true,
     # control amplitudes go to zero at boundary
     x_max_abnd[model.controls_idx] .= 0
     x_min_abnd[model.controls_idx] .= 0
-    # disallow population of the highest cavity level
-    cnp_idxs = reduce(vcat, [cavity_idxs(i) for i in cnp_levels])
-    x_max_cnp[cnp_idxs] .= 0 # cavity_nopop_tol
-    x_min_cnp[cnp_idxs] .= 0 # -cavity_nopop_tol
     # bound the time step
     if time_optimal
         u_max_dt[model.dt_idx] .= sqrt(dt * 2)
@@ -355,19 +346,15 @@ function run_traj(;fock_state=0, evolution_time=2000., dt=1., verbose=true,
     # vectorize
     x_max_amid = V(x_max_amid)
     x_max_abnd = V(x_max_abnd)
-    x_max_cnp = V(x_max_cnp)
     x_max_dt = V(x_max_dt)
     x_min_amid = V(x_min_amid)
     x_min_abnd = V(x_min_abnd)
-    x_min_cnp = V(x_min_cnp)
     x_min_dt = V(x_min_dt)
     u_max_amid = V(u_max_amid)
     u_max_abnd = V(u_max_abnd)
-    u_max_cnp = V(u_max_cnp)
     u_max_dt = V(u_max_dt)
     u_min_amid = V(u_min_amid)
     u_min_abnd = V(u_min_abnd)
-    u_min_cnp = V(u_min_cnp)
     u_min_dt = V(u_min_dt)
 
     # constraints
@@ -376,8 +363,15 @@ function run_traj(;fock_state=0, evolution_time=2000., dt=1., verbose=true,
     Altro.add_constraint!(constraints, bc_amid, V(2:N_-2))
     bc_abnd = Altro.BoundConstraint(x_max_abnd, x_min_abnd, u_max_abnd, u_min_abnd, n_, m_, M, V)
     Altro.add_constraint!(constraints, bc_abnd, V(N_-1:N_-1))
-    nbc_cnp = Altro.NormBoundConstraint(STATE, cnp_idxs, cnp_tol, n_, m_, M, V)
-    Altro.add_constraint!(constraints, nbc_cnp, V(2:N_-1))
+    nbc_cnps = [
+        NormBoundConstraint(STATE, cnp_idxs, cnp_tol, n_, m_, M, V) for cnp_idxs in [
+            state_idxs(c_level, t_level) for (c_level, t_level) in
+            product(cnp_levels, range(0; length=TRANSMON_STATE_COUNT))
+        ]
+    ]
+    for nbc_cnp in nbc_cnps
+        Altro.add_constraint!(constraints, nbc_cnp, V(2:N_-1))
+    end
     if time_optimal
         bc_dt = Altro.BoundConstraint(x_max_dt, x_min_dt, u_max_dt, u_min_dt, n_, m_, M, V)
         Altro.add_constraint!(constraints, bc_dt, V(1:N_-1))        
@@ -389,12 +383,12 @@ function run_traj(;fock_state=0, evolution_time=2000., dt=1., verbose=true,
     # cost function
     Q = zeros(n_)
     Q[model.state1_idx] .= qs[1]
-    # qss = qs[1]
-    # for level = (fock_state + 1):(CAVITY_STATE_COUNT - 1)
-    #     qss *= 2
-    #     level_idxs = cavity_idxs(level)
-    #     Q[level_idxs] .+= qss
-    # end
+    qss = qs[1]
+    for level = (target_level + 1):(CAVITY_STATE_COUNT - 1)
+        qss *= 2
+        level_idxs = cavity_idxs(level)
+        Q[level_idxs] .+= qss
+    end
     Q[model.controls_idx] .= qs[3]
     Q[model.dcontrols_idx] .= qs[4]
     if model.derivative_count == 1
@@ -480,7 +474,7 @@ function run_traj(;fock_state=0, evolution_time=2000., dt=1., verbose=true,
         "pn_steps" => pn_steps,
         "max_cost" => max_cost,
         "derivative_count" => derivative_count,
-        "fock_state" => fock_state,
+        "target_level" => target_level,
         "transmon_state_count" => TRANSMON_STATE_COUNT,
         "cavity_state_count" => CAVITY_STATE_COUNT,
     )
@@ -502,15 +496,10 @@ function run_traj(;fock_state=0, evolution_time=2000., dt=1., verbose=true,
     return result
 end
 
-"""
-indices into the state vector for each cavity amplitude at the
-given level
-"""
-@inline cavity_idxs(level::Int) = (
-    TRANSMON_STATE_COUNT * level
-    .+ [Array(1:TRANSMON_STATE_COUNT);
-        Int(HDIM_ISO/2) .+ Array(1:TRANSMON_STATE_COUNT)]
-)
+function state_idxs(c_level, t_level)
+    idx = c_level * TRANSMON_STATE_COUNT + t_level + 1
+    return [idx; idx + HDIM]
+end
 
 function test_model(;derivative_count=0, time_optimal=false)
     Hs = [M(H) for H in (NEGI_H0ROT_ISO, NEGI_H1R_ISO, NEGI_H1I_ISO, NEGI_H2R_ISO, NEGI_H2I_ISO,
@@ -564,14 +553,14 @@ use the result of run_traj to generate data for plotting
 """
 function gen_dparam(save_file_path; trial_count=1000, sigma_max=1e-4, save=true)
     # grab relevant information
-    (evolution_time, dt, derivative_count, U_, fock_state
+    (evolution_time, dt, derivative_count, U_, target_level
      ) = h5open(save_file_path, "r") do save_file
         evolution_time = read(save_file, "evolution_time")
         dt = read(save_file, "dt")
         derivative_count = read(save_file, "derivative_count")
         U_ = read(save_file, "acontrols")
-        fock_state = read(save_file, "fock_state")
-        return (evolution_time, dt, derivative_count, U_, fock_state)
+        target_level = read(save_file, "target_level")
+        return (evolution_time, dt, derivative_count, U_, target_level)
     end
     # set up problem
     n = size(NEGI_H0ROT_ISO, 1)
@@ -591,9 +580,8 @@ function gen_dparam(save_file_path; trial_count=1000, sigma_max=1e-4, save=true)
     X[1] = x0
     # target state
     xf = zeros(n)
-    cavity_state = zeros(CAVITY_STATE_COUNT)
-    cavity_state[fock_state + 1] = 1
-    ψT = kron(cavity_state, TRANSMON_G)
+    cavity_state_ = cavity_state(target_level)
+    ψT = kron(cavity_state_, TRANSMON_G)
     xf[model.state1_idx] = get_vec_iso(ψT)
     xf = V(xf)
     # generate parameters

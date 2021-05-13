@@ -54,6 +54,11 @@ const TRANSMON_ID = I(TRANSMON_STATE_COUNT)
 # or `arr[end - 1]` which is like `arr[-1]` or `arr[-2]` in Python.
 const TRANSMON_G = [1; zeros(TRANSMON_STATE_COUNT - 1)]
 const TRANSMON_E = [zeros(1); 1; zeros(TRANSMON_STATE_COUNT - 2)]
+function transmon_state(level)
+    state = zeros(TRANSMON_STATE_COUNT)
+    state[level + 1] = 1.
+    return state
+end
 
 const CAVITY_ANNIHILATE = diagm(1 => map(sqrt, 1:CAVITY_STATE_COUNT-1))
 const CAVITY_CREATE = CAVITY_ANNIHILATE'
@@ -65,6 +70,11 @@ const CAVITY_ONE = [zeros(1); 1; zeros(CAVITY_STATE_COUNT - 2)]
 # const CAVITY_TWO = [zeros(2); 1; zeros(CAVITY_STATE_COUNT - 3)]
 # const CAVITY_THREE = [zeros(3); 1; zeros(CAVITY_STATE_COUNT - 4)]
 # const CAVITY_FOUR = [zeros(4); 1; zeros(CAVITY_STATE_COUNT - 5)]
+function cavity_state(level)
+    state = zeros(CAVITY_STATE_COUNT)
+    state[level + 1] = 1.
+    return state
+end
 
 
 # Static hamiltonian.
