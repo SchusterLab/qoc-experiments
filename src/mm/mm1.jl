@@ -83,9 +83,9 @@ end
 
 @inline Base.size(model::Model) = model.n, model.m
 # vector and matrix constructors (use CPU arrays)
-@inline M(mat_) = CuMatrix(mat_)
-@inline Md(mat_) = CuMatrix(mat_)
-@inline V(vec_) = CuVector(vec_)
+@inline M(mat_) = mat_
+@inline Md(mat_) = mat_
+@inline V(vec_) = vec_
 
 # dynamics
 abstract type EXP <: Altro.Explicit end

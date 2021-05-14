@@ -296,6 +296,7 @@ function exp!(mtmp::Vector{TM}, mtmp_dense::Vector{TMd}, ipiv_tmp::TVi, A::TM) w
     W2 = mtmp[7]
     Z1 = mtmp[8]
     Z2 = mtmp[9]
+    # TODO: fastest way to do these types of ops?
     for i in eachindex(A)
         W1[i] = b13 * A6[i] + b11 * A4[i] + b9 * A2[i]
         W2[i] = b7 * A6[i] + b5 * A4[i] + b3 * A2[i]
@@ -314,10 +315,8 @@ function exp!(mtmp::Vector{TM}, mtmp_dense::Vector{TMd}, ipiv_tmp::TVi, A::TM) w
     U = mtmp[10]
     V = mtmp[11]
     W = mtmp[12]
-    mul!(W, A6, W1)
-    W .+= W2
-    mul!(V, A6, Z1)
-    V .+= Z2
+    mul!(W, A6, W1, W2, 1., 1.)
+    mul!(V, A6, Z1, Z2, 1., 1.)
     mul!(U, A_, W)
     # U - mtmp10
     # V - mtmp11
@@ -325,10 +324,9 @@ function exp!(mtmp::Vector{TM}, mtmp_dense::Vector{TMd}, ipiv_tmp::TVi, A::TM) w
     # compute R_unscaled, VmU_LU
     VmU = mtmp_dense[1]
     VpU = mtmp_dense[2]
-    for i in eachindex(A)
-        VmU[i] = V[i] - U[i]
-        VpU[i] = V[i] + U[i]
-    end
+    VmU .= VpU .= V
+    VmU .-= U
+    VpU .+= U
     (VmU_LU, VmU_ipiv) = getrf!(VmU)
     ipiv_tmp .= VmU_ipiv
     mtmp[13] .= getrs!('N', VmU_LU, VmU_ipiv, VpU)
