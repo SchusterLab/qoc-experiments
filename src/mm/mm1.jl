@@ -60,6 +60,7 @@ function Model(M_, Md_, V_, Hs, derivative_count, time_optimal)
     dt_idx = V(d2controls_idx[end] + 1:d2controls_idx[end] + 1)
     # temporary stores
     mtmp = [M_(zeros(HDIM_ISO, HDIM_ISO)) for i = 1:34]
+    mtmp[27] = M_(I(HDIM_ISO))
     mtmp_dense = [Md_(zeros(HDIM_ISO, HDIM_ISO)) for i = 1:2]
     vtmp = [V_(zeros(HDIM_ISO)) for i = 1:5]
     ipiv_tmp = V_(zeros(Int, HDIM_ISO))
