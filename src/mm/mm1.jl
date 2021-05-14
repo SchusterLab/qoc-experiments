@@ -83,9 +83,9 @@ end
 
 @inline Base.size(model::Model) = model.n, model.m
 # vector and matrix constructors (use CPU arrays)
-@inline M(mat_) = mat_
-@inline Md(mat_) = mat_
-@inline V(vec_) = vec_
+@inline M(mat_) = CuMatrix(mat_)
+@inline Md(mat_) = CuMatrix(mat_)
+@inline V(vec_) = CuVector(vec_)
 
 # dynamics
 abstract type EXP <: Altro.Explicit end
@@ -276,13 +276,13 @@ end
 
 function run_traj(;target_level=0, evolution_time=2000., dt=1., verbose=true,
                   derivative_count=0, time_optimal=false,
-                  qs=[1e0, 1e-1, 1e-1, 1e-1, 1e-1, 1e-1, 1e-1], smoke_test=false,
+                  qs=[1e0, 1e-1, 1e-1, 1e-1, 1e-1, 1e-1], smoke_test=false,
                   pn_steps=2, save=true, max_iterations=Int64(2e5),
                   max_cost=1e12, benchmark=false, ilqr_ctol=1e-2, ilqr_gtol=1e-4,
                   ilqr_max_iterations=300, max_state_value=1e10,
                   max_control_value=1e10, al_max_iterations=30,
                   cnp_levels=CAVITY_STATE_COUNT-1:CAVITY_STATE_COUNT-1,
-                  cnp_tol=1e-1, max_penalty=1e11, al_vtol=1e-4)
+                  cnp_tol=0., max_penalty=1e11, al_vtol=1e-4)
     # construct model
     Hs = [M(H) for H in (NEGI_H0ROT_ISO, NEGI_H1R_ISO, NEGI_H1I_ISO, NEGI_H2R_ISO, NEGI_H2I_ISO,
                          NEGI_DH0_ISO)]
@@ -317,89 +317,87 @@ function run_traj(;target_level=0, evolution_time=2000., dt=1., verbose=true,
         Altro.discrete_dynamics!(X0[k + 1], EXP, model, X0[k], U0[k], ts[k], dt)
     end
 
+    # constraints
+    constraints = Altro.ConstraintList(n_, m_, N_, M, V)
+
     # bound constraints
     x_max_amid = fill(Inf, n_)
-    x_max_abnd = fill(Inf, n_)
     x_max_dt = fill(Inf, n_)
     x_min_amid = fill(-Inf, n_)
-    x_min_abnd = fill(-Inf, n_)
     x_min_dt = fill(-Inf, n_)
     u_max_amid = fill(Inf, m_)
-    u_max_abnd = fill(Inf, m_)
     u_max_dt = fill(Inf, m_)
     u_min_amid = fill(-Inf, m_)
-    u_min_abnd = fill(-Inf, m_)
     u_min_dt = fill(-Inf, m_)
-    # constrain the control amplitudes
+    # bound the control amplitudes
     x_max_amid[model.controls_idx[1:2]] .= MAX_AMP_NORM_TRANSMON
     x_max_amid[model.controls_idx[3:4]] .= MAX_AMP_NORM_CAVITY
     x_min_amid[model.controls_idx[1:2]] .= -MAX_AMP_NORM_TRANSMON
     x_min_amid[model.controls_idx[3:4]] .= -MAX_AMP_NORM_CAVITY
-    # control amplitudes go to zero at boundary
-    x_max_abnd[model.controls_idx] .= 0
-    x_min_abnd[model.controls_idx] .= 0
     # bound the time step
     if time_optimal
         u_max_dt[model.dt_idx] .= sqrt(dt * 2)
-        u_min_dt[model.dt_idx] .= sqrt(dt * 5e-1)
+        u_min_dt[model.dt_idx] .= sqrt(dt / 2)
     end
     # vectorize
     x_max_amid = V(x_max_amid)
-    x_max_abnd = V(x_max_abnd)
     x_max_dt = V(x_max_dt)
     x_min_amid = V(x_min_amid)
-    x_min_abnd = V(x_min_abnd)
     x_min_dt = V(x_min_dt)
     u_max_amid = V(u_max_amid)
-    u_max_abnd = V(u_max_abnd)
     u_max_dt = V(u_max_dt)
     u_min_amid = V(u_min_amid)
-    u_min_abnd = V(u_min_abnd)
     u_min_dt = V(u_min_dt)
-
-    # constraints
-    constraints = Altro.ConstraintList(n_, m_, N_, M, V)
-    bc_amid = Altro.BoundConstraint(x_max_amid, x_min_amid, u_max_amid, u_min_amid, n_, m_, M, V)
-    Altro.add_constraint!(constraints, bc_amid, V(2:N_-2))
-    bc_abnd = Altro.BoundConstraint(x_max_abnd, x_min_abnd, u_max_abnd, u_min_abnd, n_, m_, M, V)
-    Altro.add_constraint!(constraints, bc_abnd, V(N_-1:N_-1))
-    nbc_cnps = [
-        NormBoundConstraint(STATE, cnp_idxs, cnp_tol, n_, m_, M, V) for cnp_idxs in [
+    bc_amid = BoundConstraint(x_max_amid, x_min_amid, u_max_amid, u_min_amid, n_, m_, M, V)
+    bc_dt = BoundConstraint(x_max_dt, x_min_dt, u_max_dt, u_min_dt, n_, m_, M, V)
+    
+    # norm constraints
+    # require zero population of high cavity levels
+    nc_cnp_sense = cnp_tol == 0. ? EQUALITY : INEQUALITY
+    nc_cnps = [
+        NormConstraint(nc_cnp_sense, STATE, cnp_idxs, cnp_tol, n_, m_, M, V) for cnp_idxs in [
             state_idxs(c_level, t_level) for (c_level, t_level) in
             product(cnp_levels, range(0; length=TRANSMON_STATE_COUNT))
         ]
     ]
-    for nbc_cnp in nbc_cnps
-        Altro.add_constraint!(constraints, nbc_cnp, V(2:N_-1))
-    end
+    # require state normalization
+    nc_states = NormConstraint(EQUALITY, STATE, model.state1_idx, 1., n_, m_, M, V)
+
+    # goal constraints
+    # require achievement of the target state
+    gc_target_idxs = model.state1_idx
+    gc_target = GoalConstraint(xf, gc_target_idxs, n_, m_, M, V)
+    # require the control to go to zero at the boundary
+    gc_bnd_idxs = model.controls_idx
+    gc_bnd_x = V(zeros(n_))
+    gc_bnd = GoalConstraint(gc_bnd_x, gc_bnd_idxs, n_, m_, M, V)
+    
+    # add constraints
+    add_constraint!(constraints, bc_amid, V(2:N_-2))
     if time_optimal
-        bc_dt = Altro.BoundConstraint(x_max_dt, x_min_dt, u_max_dt, u_min_dt, n_, m_, M, V)
-        Altro.add_constraint!(constraints, bc_dt, V(1:N_-1))        
+        add_constraint!(constraints, bc_dt, V(1:N_-1))        
     end
-    goal_idxs = [model.state1_idx;]
-    gc_f = Altro.GoalConstraint(xf, goal_idxs, n_, m_, M, V)
-    Altro.add_constraint!(constraints, gc_f, V(N_:N_))
+    for nc_cnp in nc_cnps
+        add_constraint!(constraints, nc_cnp, V(2:N_-1))
+    end
+    add_constraint!(constraints, nc_states, V(2:N_-1))
+    add_constraint!(constraints, gc_target, V(N_:N_))
+    add_constraint!(constraints, gc_bnd, V(N_-1:N_-1))
 
     # cost function
     Q = zeros(n_)
     Q[model.state1_idx] .= qs[1]
-    qss = qs[1]
-    for level = (target_level + 1):(CAVITY_STATE_COUNT - 1)
-        qss *= 2
-        level_idxs = cavity_idxs(level)
-        Q[level_idxs] .+= qss
-    end
-    Q[model.controls_idx] .= qs[3]
-    Q[model.dcontrols_idx] .= qs[4]
+    Q[model.controls_idx] .= qs[2]
+    Q[model.dcontrols_idx] .= qs[3]
     if model.derivative_count == 1
-        Q[model.dstate1_idx] .= qs[5]
+        Q[model.dstate1_idx] .= qs[4]
     end
     Q = Diagonal(V(Q))
     Qf = Q * N_
     R = V(zeros(m_))
-    R[model.d2controls_idx] .= qs[6]
+    R[model.d2controls_idx] .= qs[5]
     if model.time_optimal
-        R[model.dt_idx] .= qs[7]
+        R[model.dt_idx] .= qs[6]
     end
     R = Diagonal(R)
     objective = LQRObjective(Q, Qf, R, xf, n_, m_, N_, M, V)
@@ -665,7 +663,8 @@ function plot_dparam(data_file_paths; labels=nothing, legend=nothing)
     return plot_file_path
 end
 
-function plot_population(save_file_path; title="", xlabel="Time (ns)", ylabel="Population")
+function plot_population(save_file_path; title="", xlabel="Time (ns)", ylabel="Population",
+                         legend=:bottomright)
     # grab
     save_file = read_save(save_file_path)
     transmon_state_count = save_file["transmon_state_count"]
@@ -684,7 +683,7 @@ function plot_population(save_file_path; title="", xlabel="Time (ns)", ylabel="P
         push!(labels, p[2] * p[1])
     end
     # plot
-    fig = Plots.plot(dpi=DPI, title=title, xlabel=xlabel, ylabel=ylabel)
+    fig = Plots.plot(dpi=DPI, title=title, xlabel=xlabel, ylabel=ylabel, legend=legend)
     plot_file_path = generate_file_path("png", EXPERIMENT_NAME, SAVE_PATH)
     pops = zeros(N, d)
     for k = 1:N
