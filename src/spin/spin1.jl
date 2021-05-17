@@ -177,11 +177,11 @@ function run_traj(;evolution_time=20., dt=DT_PREF, verbose=true,
     objective = LQRObjective(Q, Qf, R, xf, n, m, N, M, V)
 
     # create constraints
-    control_amp = BoundConstraint(n, m, x_max, x_min, u_max, u_min, M, V)
-    control_amp_boundary = BoundConstraint(n, m, x_max_boundary, x_min_boundary,
-                                              u_max_boundary, u_min_boundary, M, V)
-    target_astate_constraint = GoalConstraint(n, m, xf, V([model.state1_idx; model.state2_idx]),
-                                                 M, V)
+    control_amp = BoundConstraint(x_max, x_min, u_max, u_min, n, m, M, V)
+    control_amp_boundary = BoundConstraint(x_max_boundary, x_min_boundary,
+                                           u_max_boundary, u_min_boundary, n, m, M, V)
+    target_astate_constraint = GoalConstraint(xf, V([model.state1_idx; model.state2_idx]),
+                                              n, m, M, V)
     # add constraints
     constraints = ConstraintList(n, m, N, M, V)
     add_constraint!(constraints, control_amp, V(2:N-2))
