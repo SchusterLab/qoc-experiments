@@ -261,7 +261,7 @@ end
 Adapted from [0]
 
 Params:
-mtmp - length 28 vector of matrices like A
+mtmp - length 28 vector of matrices like A, mtmp[27] should be the identity
 mtmp_dense - length 2 vector of dense matrices like A
 
 Refs:
@@ -296,39 +296,53 @@ function exp!(mtmp::Vector{TM}, mtmp_dense::Vector{TMd}, ipiv_tmp::TVi, A::TM) w
     W2 = mtmp[7]
     Z1 = mtmp[8]
     Z2 = mtmp[9]
-    for i in eachindex(A)
-        W1[i] = b13 * A6[i] + b11 * A4[i] + b9 * A2[i]
-        W2[i] = b7 * A6[i] + b5 * A4[i] + b3 * A2[i]
-        Z1[i] = b12 * A6[i] + b10 * A4[i] + b8 * A2[i]
-        Z2[i] = b6 * A6[i] + b4 * A4[i] + b2 * A2[i]
-    end
-    for i = 1:size_
-        W2[i, i] += b1
-        Z2[i, i] += b0
-    end
+    W1 .= A6
+    rmul!(W1, b13 / b11)
+    W1 .+= A4
+    rmul!(W1, b11 / b9)
+    W1 .+= A2
+    rmul!(W1, b9)
+    W2 .= A6
+    rmul!(W2, b7 / b5)
+    W2 .+= A4
+    rmul!(W2, b5 / b3)
+    W2 .+= A2
+    rmul!(W2, b3 / b1)
+    W2 .+= mtmp[27]
+    rmul!(W2, b1)
+    Z1 .= A6
+    rmul!(Z1, b12 / b10)
+    Z1 .+= A4
+    rmul!(Z1, b10 / b8)
+    Z1 .+= A2
+    rmul!(Z1, b8)
+    Z2 .= A6
+    rmul!(Z2, b6 / b4)
+    Z2 .+= A4
+    rmul!(Z2, b4 / b2)
+    Z2 .+= A2
+    rmul!(Z2, b2 / b0)
+    Z2 .+= mtmp[27]
+    rmul!(Z2, b0)
     # W1 - mtmp6
     # W2 - mtmp7
     # Z1 - mtmp8
     # Z2 - mtmp9
     # compute U, V, W
-    U = mtmp[10]
-    V = mtmp[11]
-    W = mtmp[12]
-    mul!(W, A6, W1)
+    W = mul!(mtmp[12], A6, W1)
     W .+= W2
-    mul!(V, A6, Z1)
+    V = mul!(mtmp[11], A6, Z1)
     V .+= Z2
-    mul!(U, A_, W)
+    U = mul!(mtmp[10], A_, W)
     # U - mtmp10
     # V - mtmp11
     # W - mtmp12
     # compute R_unscaled, VmU_LU
     VmU = mtmp_dense[1]
     VpU = mtmp_dense[2]
-    for i in eachindex(A)
-        VmU[i] = V[i] - U[i]
-        VpU[i] = V[i] + U[i]
-    end
+    VmU .= VpU .= V
+    VmU .-= U
+    VpU .+= U
     (VmU_LU, VmU_ipiv) = getrf!(VmU)
     ipiv_tmp .= VmU_ipiv
     mtmp[13] .= getrs!('N', VmU_LU, VmU_ipiv, VpU)
@@ -352,7 +366,7 @@ end
 Adapted from [0]
 
 Params:
-mtmp - length 28 vector of matrices like A
+mtmp - length 28 vector of matrices like A, mtmp[27] should be the identity
 mtmp_dense - length 2 vector of dense matrices like A
 
 Refs:
@@ -409,12 +423,30 @@ function exp_frechet!(mtmp::Vector{TM}, mtmp_dense::Vector{TMd},
     Lw2 = mtmp[19]
     Lz1 = mtmp[20]
     Lz2 = mtmp[21]
-    for i in eachindex(A)
-        Lw1[i] = b13 * M6[i] + b11 * M4[i] + b9 * M2[i]
-        Lw2[i] = b7 * M6[i] + b5 * M4[i] + b3 * M2[i]
-        Lz1[i] = b12 * M6[i] + b10 * M4[i] + b8 * M2[i]
-        Lz2[i] = b6 * M6[i] + b4 * M4[i] + b2 * M2[i]
-    end
+    Lw1 .= M6
+    rmul!(Lw1, b13 / b11)
+    Lw1 .+= M4
+    rmul!(Lw1, b11 / b9)
+    Lw1 .+= M2
+    rmul!(Lw1, b9)
+    Lw2 .= M6
+    rmul!(Lw2, b7 / b5)
+    Lw2 .+= M4
+    rmul!(Lw2, b5 / b3)
+    Lw2 .+= M2
+    rmul!(Lw2, b3)
+    Lz1 .= M6
+    rmul!(Lz1, b12 / b10)
+    Lz1 .+= M4
+    rmul!(Lz1, b10 / b8)
+    Lz1 .+= M2
+    rmul!(Lz1, b8)
+    Lz2 .= M6
+    rmul!(Lz2, b6 / b4)
+    Lz2 .+= M4
+    rmul!(Lz2, b4 / b2)
+    Lz2 .+= M2
+    rmul!(Lz2, b2)
     # Lw1 - mtmp18
     # Lw2 - mtmp19
     # Lz1 - mtmp20
@@ -432,13 +464,11 @@ function exp_frechet!(mtmp::Vector{TM}, mtmp_dense::Vector{TMd},
     # Lu - mtmp 23
     # Lv - mtmp 24
     # compute L
-    for i in eachindex(A)
-        mtmp[26][i] = Lu[i] - Lv[i]
-    end
+    mtmp[26] .= Lu
+    mtmp[26] .-= Lv
     L = mul!(mtmp[25], mtmp[26], R)
-    for i in eachindex(A)
-        L[i] += Lu[i] + Lv[i]
-    end
+    L .+= Lu
+    L .+= Lv
     mtmp_dense[2] .= L
     L .= getrs!('N', VmU_LU, VmU_ipiv, mtmp_dense[2])
     # L_unscaled - mtmp25 - mtmp_dense2

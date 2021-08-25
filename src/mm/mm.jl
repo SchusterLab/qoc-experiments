@@ -13,7 +13,6 @@ include(joinpath(WDIR, "src", "qocexperiments.jl"))
 # e.g. two functions have the same name.
 using HDF5
 using LinearAlgebra
-using TrajectoryOptimization
 import Plots
 using Printf
 using StaticArrays
@@ -30,14 +29,12 @@ const TRANSMON_FREQ = 2π * 4.99
 const CHI_E_2 = 2π * -1.33e-3
 const CAVITY_FREQ_2 = 2π * 5.96
 const KAPPA_2 = 2π * 5.23e-6
-# const MAX_AMP_NORM_TRANSMON = 2π * 4e-3
-# const MAX_AMP_NORM_CAVITY = 2π * 4e-4
 const MAX_AMP_NORM_TRANSMON = 2π * 4e-2
 const MAX_AMP_NORM_CAVITY = 2π * 4e-3
 
 # Define the system.
 const TRANSMON_STATE_COUNT = 2
-const CAVITY_STATE_COUNT = 10
+const CAVITY_STATE_COUNT = 20
 const HDIM = TRANSMON_STATE_COUNT * CAVITY_STATE_COUNT
 const HDIM_ISO = 2 * HDIM
 
@@ -57,6 +54,11 @@ const TRANSMON_ID = I(TRANSMON_STATE_COUNT)
 # or `arr[end - 1]` which is like `arr[-1]` or `arr[-2]` in Python.
 const TRANSMON_G = [1; zeros(TRANSMON_STATE_COUNT - 1)]
 const TRANSMON_E = [zeros(1); 1; zeros(TRANSMON_STATE_COUNT - 2)]
+function transmon_state(level)
+    state = zeros(TRANSMON_STATE_COUNT)
+    state[level + 1] = 1.
+    return state
+end
 
 const CAVITY_ANNIHILATE = diagm(1 => map(sqrt, 1:CAVITY_STATE_COUNT-1))
 const CAVITY_CREATE = CAVITY_ANNIHILATE'
@@ -68,6 +70,11 @@ const CAVITY_ONE = [zeros(1); 1; zeros(CAVITY_STATE_COUNT - 2)]
 # const CAVITY_TWO = [zeros(2); 1; zeros(CAVITY_STATE_COUNT - 3)]
 # const CAVITY_THREE = [zeros(3); 1; zeros(CAVITY_STATE_COUNT - 4)]
 # const CAVITY_FOUR = [zeros(4); 1; zeros(CAVITY_STATE_COUNT - 5)]
+function cavity_state(level)
+    state = zeros(CAVITY_STATE_COUNT)
+    state[level + 1] = 1.
+    return state
+end
 
 
 # Static hamiltonian.
